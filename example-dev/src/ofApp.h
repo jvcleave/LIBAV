@@ -2,6 +2,7 @@
 
 #include "ofMain.h"
 #include "VideoFile.h"
+#include "Clock.h"
 
 
 class ofApp : public ofBaseApp{
@@ -13,6 +14,6 @@ public:
     void keyPressed(int key);
     
     VideoFile videoFile;
-    
+    Clock clock;
 
 };
