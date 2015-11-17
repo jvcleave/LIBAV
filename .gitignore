@@ -1,0 +1,6 @@
+obj
+readMe.txt
+*._*
+!example-*/bin/data/.gitkeep
+example-*/bin/libs
+example-*/bin/example-*
