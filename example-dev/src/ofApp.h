@@ -3,6 +3,7 @@
 #include "ofMain.h"
 #include "VideoFile.h"
 #include "Clock.h"
+#include "Player.h"
 
 
 class ofApp : public ofBaseApp{
@@ -15,5 +16,5 @@ public:
     
     VideoFile videoFile;
     Clock clock;
-
+    Player player;
 };

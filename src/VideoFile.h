@@ -1,4 +1,5 @@
 #pragma once
+#pragma GCC diagnostic ignored "-Wswitch"
 
 #include "ofMain.h"
 #include <sys/stat.h>
@@ -35,9 +36,11 @@ public:
     StreamInfo()
     {
         codecExtraData = NULL;
+        codecExtraSize = 0;
         forceSoftwareDecoding = false;
         isAVI = false;
         isMKV = false;
+        doFormatting =false;
     }
     
     AVCodecID codec;
@@ -67,7 +70,7 @@ public:
     int audioBitsPerSample;
         
     // CODEC EXTRADATA
-    void*        codecExtraData; // extra data for codec to use
+    unsigned char*        codecExtraData; // extra data for codec to use
     unsigned int codecExtraSize; // size of extra data
     unsigned int codecTag; // extra identifier hints for decoding
     
@@ -77,12 +80,35 @@ public:
     
     bool isAVI;
     bool isMKV;
+    bool doFormatting;
     
+    bool NaluFormatStartCodes(enum AVCodecID codec, unsigned char *in_extradata, int in_extrasize)
+    {
+        switch(codec)
+        {
+            case AV_CODEC_ID_H264:
+            {
+                if (in_extrasize < 7 || in_extradata == NULL)
+                {
+                    return true;
+                }
+                // valid avcC atom data always starts with the value 1 (version), otherwise annexb
+                else if ( *in_extradata != 1 )
+                {
+                    return true;
+                }
+            }
+            default:
+                break;
+        }
+        return false;
+    }
+
     void setup(AVStream *avStream)
     {
         codec               = avStream->codec->codec_id;
-        codecExtraData      = avStream->codec->extradata;
-        codecExtraSize      = avStream->codec->extradata_size;
+        //codecExtraData      = avStream->codec->extradata;
+        //codecExtraSize      = avStream->codec->extradata_size;
         audioChannels       = avStream->codec->channels;
         audioSampleRate     = avStream->codec->sample_rate;
         audioBlockAlign     = avStream->codec->block_align;
@@ -95,10 +121,21 @@ public:
             audioBitsPerSample = 16;
         }
         
-       width         = avStream->codec->width;
-       height        = avStream->codec->height;
-       profile       = avStream->codec->profile;
-       
+        width         = avStream->codec->width;
+        height        = avStream->codec->height;
+        profile       = avStream->codec->profile;
+        
+        
+        if(avStream->codec->extradata_size > 0 && avStream->codec->extradata != NULL)
+        {
+            codecExtraSize = avStream->codec->extradata_size;
+            codecExtraData = (unsigned char *)malloc(codecExtraSize);
+            memcpy(codecExtraData, avStream->codec->extradata, avStream->codec->extradata_size);
+            ofLogVerbose(__func__) << "codecExtraSize: " << codecExtraSize;
+        }
+        doFormatting = NaluFormatStartCodes(codec, codecExtraData, codecExtraSize);
+        ofLogVerbose(__func__) << "doFormatting: " << doFormatting;
+        
         if(avStream->codec->codec_type == AVMEDIA_TYPE_VIDEO)
         {
             //CUSTOM
@@ -148,7 +185,6 @@ public:
         }
 
     }
-    
     string toString()
     {
         stringstream info;
@@ -188,23 +224,29 @@ public:
         hasVideo = false;
     }
     
-    bool setup(AVStream *avStream_, int id_)
+    bool setup(AVStream *avStream_)
     {
         avStream = avStream_;
-        id          = id_;
         bool isValid =false;
         switch (avStream->codec->codec_type)
         {
             case AVMEDIA_TYPE_AUDIO:
             {
+                ofLogVerbose() << "AVMEDIA_TYPE_AUDIO";
                 isValid = true;
-                hasVideo = true;
+                hasAudio = true;
                 break;
             }
             case AVMEDIA_TYPE_VIDEO:
             {
+                ofLogVerbose() << "AVMEDIA_TYPE_VIDEO";
                 isValid = true;
-                hasAudio = true;                
+                hasVideo = true;                
+                break;
+            }
+            default:
+            {
+                ofLogVerbose() << "DEFAULT THROWN";
                 break;
             }
         }
@@ -216,23 +258,28 @@ public:
         return isValid;
     }
     
-    AVStream    *avStream;
-    int         id;
-    StreamInfo streamInfo;
-    bool hasAudio;
-    bool hasVideo;
+    AVStream*   avStream;
+    StreamInfo  streamInfo;
+    bool        hasAudio;
+    bool        hasVideo;
 };
 
 class VideoFile
 {
 public:
-    VideoFile();
     void setup(string videoPath);
+    vector<Stream> audioStreams;
+    vector<Stream> videoStreams;
+    Stream* videoStream;
+    bool hasAudio()
+    {
+        return !audioStreams.empty();
+    };
     
-    vector<Stream> streams;
+    bool hasVideo()
+    {
+        return !videoStreams.empty();
+    };
+    Stream* getBestVideoStream();
     
-private:
-    int audioStreamCounter;
-    int videoStreamCounter;
-
 };

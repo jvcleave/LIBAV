@@ -57,16 +57,7 @@ static int64_t onSeekPacket(void* bufferData_, int64_t pos, int whence)
     
 }
 
-VideoFile::VideoFile()
-{
-    av_register_all();
-    avformat_network_init();
-    
-    audioStreamCounter = 0;
-    videoStreamCounter = 0;
-    
 
-}
 
 void VideoFile::setup(string videoPath)
 {
@@ -220,20 +211,23 @@ void VideoFile::setup(string videoPath)
         for (size_t i = 0; i < avFormatContext->nb_streams; i++)
         {
             Stream stream;
-            bool isValidStream = stream.setup(avFormatContext->streams[i], i);
+            bool isValidStream = stream.setup(avFormatContext->streams[i]);
             if(isValidStream)
             {
-                streams.push_back(stream);
+                
+                if(stream.hasAudio)
+                {
+                    audioStreams.push_back(stream);
+                }
+                if(stream.hasVideo)
+                {
+                    videoStreams.push_back(stream);
+                }
+                ofLogVerbose() << stream.streamInfo.toString();
             }
-           
-           
-            
         }
-        ofLogVerbose() << "streams.size(): " << streams.size();
-        for (size_t i = 0; i < avFormatContext->nb_streams; i++)
-        {
-            ofLogVerbose() << streams[i].streamInfo.toString();
-        }
+        ofLogVerbose() << "hasAudio(): " << hasAudio();
+        ofLogVerbose() << "hasVideo(): " << hasVideo();
         
         
         
@@ -246,3 +240,17 @@ void VideoFile::setup(string videoPath)
     ofLogVerbose() << "result: " << result;
 
 }
+
+Stream* VideoFile::getBestVideoStream()
+{
+    Stream* result = NULL;
+    
+    if(hasVideo())
+    {
+        result =  &videoStreams.front();
+    }else
+    {
+        ofLogError(__func__) << "NO VIDEOS";
+    }
+    return result;
+};
