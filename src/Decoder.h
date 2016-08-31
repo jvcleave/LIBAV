@@ -7,6 +7,7 @@ class Decoder
 {
 public:
     Clock* clock;
+    VideoFile* videoFile;
     Stream* stream;
     OMX_HANDLETYPE decoder;
     OMX_HANDLETYPE renderer;
@@ -36,15 +37,17 @@ public:
     Decoder()
     {
         clock = NULL;
+        videoFile = NULL;
         stream = NULL;
     }
     
     
         
-    void setup(Clock* clock_, Stream* stream_)
+    void setup(Clock* clock_, VideoFile* videoFile_)
     {
         clock = clock_;
-        stream = stream_;
+        videoFile = videoFile_;
+        stream = videoFile->getBestVideoStream();
         
         OMX_CALLBACKTYPE  decoderCallbacks;
         decoderCallbacks.EventHandler    = &Decoder::onDecoderEvent;
@@ -263,6 +266,14 @@ public:
         //start renderer
         error = OMX_SendCommand(renderer, OMX_CommandStateSet, OMX_StateExecuting, 0);
         OMX_TRACE(error);
+        
+        clock->start(0.0);
+        
+        while(videoFile->read())
+        {
+            counter++;
+            ofLog() << counter;
+        }
     }
     
     

@@ -9,6 +9,25 @@ class Clock
 public:
     
     
+    
+    
+    
+    OMX_TICKS ToOMXTime(int64_t pts)
+    {
+        OMX_TICKS ticks;
+        ticks.nLowPart = pts;
+        ticks.nHighPart = pts >> 32;
+        return ticks;
+    }
+    
+    int64_t FromOMXTime(OMX_TICKS ticks)
+    {
+        int64_t pts = ticks.nLowPart | ((uint64_t)(ticks.nHighPart) << 32);
+        return pts;
+    }
+    
+    
+    
     static OMX_ERRORTYPE 
     onClockEmptyBufferDone(OMX_HANDLETYPE hComponent, 
                         OMX_PTR pAppData, 
@@ -80,6 +99,15 @@ public:
         error = OMX_SetConfig(handle, OMX_IndexConfigTimeActiveRefClock, &refClockConfig);
         OMX_TRACE(error);
     }
-    
+    void start(double pts=0.0)
+    {
+        OMX_TIME_CONFIG_CLOCKSTATETYPE clockConfig;
+        OMX_INIT_STRUCTURE(clockConfig);
+        
+        clockConfig.eState = OMX_TIME_ClockStateRunning;
+        clockConfig.nStartTime = ToOMXTime((uint64_t)pts);
+        OMX_ERRORTYPE error = OMX_SetConfig(handle, OMX_IndexConfigTimeClockState, &clockConfig);
+        OMX_TRACE(error);
+    }
     
 };

@@ -29,6 +29,7 @@ extern "C"
 #include <libavformat/avformat.h>
     
 }
+#define MAX_OMX_STREAMS        100
 
 class StreamInfo
 {
@@ -270,10 +271,13 @@ public:
     vector<Stream> audioStreams;
     vector<Stream> videoStreams;
     Stream* videoStream;
-    
+    ofFile file;
+    AVFormatContext* avFormatContext;
     static const bool doAbort = false; 
+    vector<AVPacket> avPackets;
     VideoFile()
     {
+        avFormatContext = NULL;
         videoStream = NULL;
     }
     bool hasAudio()
@@ -333,17 +337,76 @@ public:
         
     }
     
-    
+    bool read()
+    {
+        bool result = true;
+        AVPacket  pkt;
+
+        if(avFormatContext->pb)
+        {
+            avFormatContext->pb->eof_reached = 0;
+            //result = false;
+        }
+        // keep track if ffmpeg doesn't always set these
+        pkt.size = 0;
+        pkt.data = NULL;
+        pkt.stream_index = MAX_OMX_STREAMS;
+        
+        int frameCode = av_read_frame(avFormatContext, &pkt);
+        ofLogVerbose() << "frameCode: " << frameCode;
+        if (frameCode < 0)
+        {
+            //ofLogVerbose(__func__) << "END OF FILE";
+            result = false;
+        }else
+        {
+            stringstream info;
+            
+            info << endl;
+            info << "id: " << avPackets.size() << endl;
+            info << "pts: " << pkt.pts << endl;
+            info << "dts: " << pkt.dts << endl;
+            info << "size: " << pkt.size << endl;
+            info << "stream_index: " << pkt.stream_index << endl;
+            info << "isKeyFrame: " << (pkt.flags & AV_PKT_FLAG_KEY) << endl;
+            info << "isCorrupt: " << (pkt.flags & AV_PKT_FLAG_CORRUPT) << endl;
+            info << "hasSideData: " << !(pkt.side_data == NULL) << endl;
+            info << "side_data_elems: " << pkt.side_data_elems << endl;
+            info << "duration: " << pkt.duration << endl;
+            info << "pos: " << pkt.pos << endl;
+            info << "convergence_duration: " << pkt.convergence_duration << endl;
+            ofLogVerbose() << "info: " << info.str();
+            avPackets.push_back(pkt);
+            
+            /*
+            if (pkt.size < 0 || pkt.stream_index >= MAX_OMX_STREAMS)
+            {
+                // XXX, in some cases ffmpeg returns a negative packet size
+                if(avFormatContext->pb && !avFormatContext->pb->eof_reached)
+                {
+                    ofLogError(__func__) << "negative packet size" << pkt.size;s
+                }
+            }
+            AVStream* avStream = avFormatContext->streams[pkt.stream_index];*/
+        }
+        //av_free_packet(&pkt);
+        return result;
+    }
     
     void setup(string videoPath)
     {
+        file = ofFile(videoPath);
+        if(file.exists())
+        {
+            ofLogVerbose(__func__) << "OPENING " << file.getAbsolutePath();
+        }
         unsigned char* buffer = NULL;
         size_t bufferSize;
         unsigned char* avIOContextBuffer = NULL;
         
         size_t avIOContextBufferSize = 4096;
         
-        AVFormatContext* avFormatContext = avformat_alloc_context();
+        avFormatContext = avformat_alloc_context();
         avFormatContext->flags |= AVFMT_FLAG_NONBLOCK;
         const AVIOInterruptCB interruptCallback = { interrupt_cb, NULL };
         avFormatContext->interrupt_callback = interruptCallback;

@@ -19,7 +19,7 @@ public:
     {
         videoFile = videoFile_;
         clock.setup(videoFile->hasAudio());
-        decoder.setup(&clock, videoFile->getBestVideoStream());
+        decoder.setup(&clock, videoFile);
     }
  
 };
