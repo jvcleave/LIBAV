@@ -11,8 +11,7 @@ void ofApp::setup()
     ofLogVerbose() << "videoPath: " << videoPath;
     videoFile.setup(videoPath);
     
-    clock.setup(videoFile.hasAudio());
-    //player.setup(&clock, &videoFile);
+    player.setup(&videoFile);
     
     
 

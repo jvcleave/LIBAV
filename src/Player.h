@@ -5,19 +5,21 @@
 class Player
 {
 public:
+    
+    Clock clock;
+    VideoFile* videoFile;
+    Decoder decoder;
+    
     Player()
     {
         videoFile = NULL;
-        clock = NULL;
     };
     
-    void setup(Clock* clock_, VideoFile* videoFile_)
+    void setup(VideoFile* videoFile_)
     {
-        clock = clock_;
         videoFile = videoFile_;
-        decoder.setup(clock, videoFile->getBestVideoStream());
+        clock.setup(videoFile->hasAudio());
+        decoder.setup(&clock, videoFile->getBestVideoStream());
     }
-    Clock* clock;
-    VideoFile* videoFile;
-    Decoder decoder;
+ 
 };

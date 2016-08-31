@@ -2,7 +2,6 @@
 
 #include "ofMain.h"
 #include "VideoFile.h"
-#include "Clock.h"
 #include "Player.h"
 
 
