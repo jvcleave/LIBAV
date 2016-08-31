@@ -12,7 +12,7 @@ void ofApp::setup()
     videoFile.setup(videoPath);
     
     clock.setup(videoFile.hasAudio());
-    player.setup(&clock, &videoFile);
+    //player.setup(&clock, &videoFile);
     
     
 
