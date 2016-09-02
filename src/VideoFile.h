@@ -528,13 +528,13 @@ public:
     
  
     
-    static int interrupt_cb(void*)
+    static int onInterrupt(void*)
     {
         if(VideoFile::doAbort)
         {
             return 1;
         }
-        ofLogVerbose() << "interrupt_cb";
+        ofLogVerbose() << "onInterrupt";
         return 0;
     }
     
@@ -542,7 +542,7 @@ public:
     {
         ofLogVerbose() << "onWritePacket";
 
-        if(interrupt_cb(NULL))
+        if(onInterrupt(NULL))
         {
             return -1;
         }
@@ -557,7 +557,7 @@ public:
     {
         ofLogVerbose() << "onReadPacket";
         
-        if(interrupt_cb(NULL))
+        if(onInterrupt(NULL))
         {
             return -1;
         }
@@ -575,7 +575,7 @@ public:
     static int64_t onSeekPacket(void* bufferData_, int64_t pos, int whence)
     {
         ofLogVerbose() << "onSeekPacket";
-        if(interrupt_cb(NULL))
+        if(onInterrupt(NULL))
         {
             return -1;
         }
@@ -694,7 +694,12 @@ public:
         
         avFormatContext = avformat_alloc_context();
         avFormatContext->flags |= AVFMT_FLAG_NONBLOCK;
-        const AVIOInterruptCB interruptCallback = { interrupt_cb, NULL };
+        
+        AVIOInterruptCB interruptCallback;
+        
+        interruptCallback.callback= VideoFile::onInterrupt;
+        interruptCallback.opaque = (void*)this;
+        
         avFormatContext->interrupt_callback = interruptCallback;
         
    
