@@ -29,8 +29,8 @@ extern "C"
 #include <libavformat/avformat.h>
     
 }
-#define STALL ofSleepMillis(2000)
-
+//define STALL ofSleepMillis(2000)
+#define STALL
 #define MAX_OMX_STREAMS        100
 
 #define DVD_TIME_BASE 1000000
@@ -43,10 +43,20 @@ extern "C"
 
 #define DVD_PLAYSPEED_PAUSE       0       // frame stepping
 #define DVD_PLAYSPEED_NORMAL      1000
-class StreamInfo
+
+
+
+class Stream
 {
 public:
-   
+    
+    
+    
+    AVStream*   avStream;
+    bool        hasAudio;
+    bool        hasVideo;
+    bool isValid;
+    
     AVCodecID codec;
     bool forceSoftwareDecoding;  //force software decoding
     
@@ -72,7 +82,7 @@ public:
     int audioBitrate;
     int audioBlockAlign;
     int audioBitsPerSample;
-        
+    
     // CODEC EXTRADATA
     unsigned char*        codecExtraData; // extra data for codec to use
     unsigned int codecExtraSize; // size of extra data
@@ -85,10 +95,13 @@ public:
     bool isAVI;
     bool isMKV;
     bool doFormatting;
-    
-    StreamInfo()
+    string codecTypeString;
+    Stream()
     {
-     
+        avStream = NULL;
+        hasAudio = false;
+        hasVideo = false;
+        isValid = false;
         forceSoftwareDecoding = false;
         isAVI = false;
         isMKV = false;
@@ -122,9 +135,8 @@ public:
         isAVI = false;
         isMKV = false;
         doFormatting = false;
+        codecTypeString = "";
     }
-    
-    
     
     bool NaluFormatStartCodes(enum AVCodecID codec, unsigned char *in_extradata, int in_extrasize)
     {
@@ -147,88 +159,141 @@ public:
         }
         return false;
     }
-
-    void setup(AVStream *avStream)
+    
+    bool setup(AVStream* avStream_)
     {
-        codec               = avStream->codec->codec_id;
-        //codecExtraData      = avStream->codec->extradata;
-        //codecExtraSize      = avStream->codec->extradata_size;
-        audioChannels       = avStream->codec->channels;
-        audioSampleRate     = avStream->codec->sample_rate;
-        audioBlockAlign     = avStream->codec->block_align;
-        audioBitrate        = avStream->codec->bit_rate;
-        audioBitsPerSample  = avStream->codec->bits_per_coded_sample;
-        gopSize             = avStream->codec->gop_size;
-        
-        if(audioBitsPerSample == 0)
+        avStream = avStream_;
+        switch (avStream->codec->codec_type)
         {
-            audioBitsPerSample = 16;
+            case AVMEDIA_TYPE_AUDIO:
+            {
+                codecTypeString = "AVMEDIA_TYPE_AUDIO";
+                isValid = true;
+                hasAudio = true;
+                break;
+            }
+            case AVMEDIA_TYPE_VIDEO:
+            {
+                codecTypeString = "AVMEDIA_TYPE_VIDEO";
+                isValid = true;
+                hasVideo = true;                
+                break;
+            }
+            case AVMEDIA_TYPE_UNKNOWN:
+            {
+                codecTypeString = "AVMEDIA_TYPE_UNKNOWN";            
+                break;
+            }    
+            case AVMEDIA_TYPE_DATA:
+            {
+                codecTypeString = "AVMEDIA_TYPE_DATA";            
+                break;
+            } 
+            case AVMEDIA_TYPE_SUBTITLE:
+            {
+                codecTypeString = "AVMEDIA_TYPE_SUBTITLE";            
+                break;
+            }
+            case AVMEDIA_TYPE_ATTACHMENT:
+            {
+                codecTypeString = "AVMEDIA_TYPE_ATTACHMENT";            
+                break;
+            }
+            case AVMEDIA_TYPE_NB:
+            {
+                codecTypeString = "AVMEDIA_TYPE_NB";            
+                break;
+            }
+            default:
+            {
+                codecTypeString = "DEFAULT THROWN";
+                break;
+            }
         }
-        
-        width         = avStream->codec->width;
-        height        = avStream->codec->height;
-        profile       = avStream->codec->profile;
-        
-        
-        if(avStream->codec->extradata_size > 0 && avStream->codec->extradata != NULL)
+        if(isValid)
         {
-            codecExtraSize = avStream->codec->extradata_size;
-            codecExtraData = (unsigned char *)malloc(codecExtraSize);
-            memcpy(codecExtraData, avStream->codec->extradata, avStream->codec->extradata_size);
-            ofLogVerbose(__func__) << "codecExtraSize: " << codecExtraSize;
-        }
-        doFormatting = NaluFormatStartCodes(codec, codecExtraData, codecExtraSize);
-        ofLogVerbose(__func__) << "doFormatting: " << doFormatting;
-        
-        if(avStream->codec->codec_type == AVMEDIA_TYPE_VIDEO)
-        {
-            //CUSTOM
-            duration    = avStream->duration;
-            numFrames   = avStream->nb_frames;
+            codec               = avStream->codec->codec_id;
+            //codecExtraData      = avStream->codec->extradata;
+            //codecExtraSize      = avStream->codec->extradata_size;
+            audioChannels       = avStream->codec->channels;
+            audioSampleRate     = avStream->codec->sample_rate;
+            audioBlockAlign     = avStream->codec->block_align;
+            audioBitrate        = avStream->codec->bit_rate;
+            audioBitsPerSample  = avStream->codec->bits_per_coded_sample;
+            gopSize             = avStream->codec->gop_size;
             
-           
-           fpsRate  = avStream->r_frame_rate.num;
-           fpsScale = avStream->r_frame_rate.den;
-           
-            if(isMKV && avStream->avg_frame_rate.den && avStream->avg_frame_rate.num)
+            if(audioBitsPerSample == 0)
             {
-                fpsRate     = avStream->avg_frame_rate.num;
-                fpsScale    = avStream->avg_frame_rate.den;
+                audioBitsPerSample = 16;
             }
-            else 
+            
+            width         = avStream->codec->width;
+            height        = avStream->codec->height;
+            profile       = avStream->codec->profile;
+            
+            
+            if(avStream->codec->extradata_size > 0 && avStream->codec->extradata != NULL)
             {
-                if(avStream->r_frame_rate.num && avStream->r_frame_rate.den)
+                codecExtraSize = avStream->codec->extradata_size;
+                codecExtraData = (unsigned char *)malloc(codecExtraSize);
+                memcpy(codecExtraData, avStream->codec->extradata, avStream->codec->extradata_size);
+                ofLogVerbose(__func__) << "codecExtraSize: " << codecExtraSize;
+            }
+            doFormatting = NaluFormatStartCodes(codec, codecExtraData, codecExtraSize);
+            ofLogVerbose(__func__) << "doFormatting: " << doFormatting;
+            
+            if(avStream->codec->codec_type == AVMEDIA_TYPE_VIDEO)
+            {
+                //CUSTOM
+                duration    = avStream->duration;
+                numFrames   = avStream->nb_frames;
+                
+                
+                fpsRate  = avStream->r_frame_rate.num;
+                fpsScale = avStream->r_frame_rate.den;
+                
+                if(isMKV && avStream->avg_frame_rate.den && avStream->avg_frame_rate.num)
                 {
-                   fpsRate  = avStream->r_frame_rate.num;
-                   fpsScale = avStream->r_frame_rate.den;
-                }else
+                    fpsRate     = avStream->avg_frame_rate.num;
+                    fpsScale    = avStream->avg_frame_rate.den;
+                }
+                else 
                 {
-                   fpsRate  = 0;
-                   fpsScale = 0; 
+                    if(avStream->r_frame_rate.num && avStream->r_frame_rate.den)
+                    {
+                        fpsRate  = avStream->r_frame_rate.num;
+                        fpsScale = avStream->r_frame_rate.den;
+                    }else
+                    {
+                        fpsRate  = 0;
+                        fpsScale = 0; 
+                    }
+                }
+                
+                if (avStream->sample_aspect_ratio.num != 0)
+                {
+                    aspect = av_q2d(avStream->sample_aspect_ratio) * avStream->codec->width / avStream->codec->height;
+                }
+                else
+                {
+                    if (avStream->codec->sample_aspect_ratio.num != 0)
+                    {
+                        aspect = av_q2d(avStream->codec->sample_aspect_ratio) * avStream->codec->width / avStream->codec->height;
+                    }else
+                    {
+                        aspect = 0.0f;
+                    }
+                }
+                if (isAVI && avStream->codec->codec_id == AV_CODEC_ID_H264)
+                {
+                    isPTSValid = false;
                 }
             }
 
-            if (avStream->sample_aspect_ratio.num != 0)
-            {
-                aspect = av_q2d(avStream->sample_aspect_ratio) * avStream->codec->width / avStream->codec->height;
-            }
-            else
-            {
-                if (avStream->codec->sample_aspect_ratio.num != 0)
-                {
-                    aspect = av_q2d(avStream->codec->sample_aspect_ratio) * avStream->codec->width / avStream->codec->height;
-                }else
-                {
-                    aspect = 0.0f;
-                }
-            }
-            if (isAVI && avStream->codec->codec_id == AV_CODEC_ID_H264)
-            {
-                isPTSValid = false;
-            }
         }
-
+        return isValid;
     }
+    
     string toString()
     {
         stringstream info;
@@ -252,89 +317,11 @@ public:
         info << "audioBlockAlign: "		<<	audioBlockAlign			<< endl;
         info << "audioBitrate: "		<<	audioBitrate			<< endl;
         info << "audioBitsPerSample: "	<<	audioBitsPerSample		<< endl;
+        info << "codecTypeString: "     <<	codecTypeString		<< endl;
         
         return info.str();
     }
-};
-
-
-class Stream
-{
-public:
     
-    
-    
-    AVStream*   avStream;
-    StreamInfo  streamInfo;
-    bool        hasAudio;
-    bool        hasVideo;
-    bool isValid;
-    
-    Stream()
-    {
-        avStream = NULL;
-        hasAudio = false;
-        hasVideo = false;
-        isValid = false;
-    }
-    
-    bool setup(AVStream *avStream_)
-    {
-        avStream = avStream_;
-        switch (avStream->codec->codec_type)
-        {
-            case AVMEDIA_TYPE_AUDIO:
-            {
-                ofLogVerbose() << "AVMEDIA_TYPE_AUDIO";
-                isValid = true;
-                hasAudio = true;
-                break;
-            }
-            case AVMEDIA_TYPE_VIDEO:
-            {
-                ofLogVerbose() << "AVMEDIA_TYPE_VIDEO";
-                isValid = true;
-                hasVideo = true;                
-                break;
-            }
-            case AVMEDIA_TYPE_UNKNOWN:
-            {
-                ofLogVerbose() << "AVMEDIA_TYPE_UNKNOWN";            
-                break;
-            }    
-            case AVMEDIA_TYPE_DATA:
-            {
-                ofLogVerbose() << "AVMEDIA_TYPE_DATA";            
-                break;
-            } 
-            case AVMEDIA_TYPE_SUBTITLE:
-            {
-                ofLogVerbose() << "AVMEDIA_TYPE_SUBTITLE";            
-                break;
-            }
-            case AVMEDIA_TYPE_ATTACHMENT:
-            {
-                ofLogVerbose() << "AVMEDIA_TYPE_ATTACHMENT";            
-                break;
-            }
-            case AVMEDIA_TYPE_NB:
-            {
-                ofLogVerbose() << "AVMEDIA_TYPE_NB";            
-                break;
-            }
-            default:
-            {
-                ofLogVerbose() << "DEFAULT THROWN";
-                break;
-            }
-        }
-        if(isValid)
-        {
-           streamInfo.setup(avStream); 
-        }
-        return isValid;
-    }
-
 };
 class OMXPacket
 {
@@ -347,9 +334,8 @@ public:
     int       size;
     uint8_t*  data;
     int       stream_index;
-    StreamInfo hints;
-    bool hintsAreValid;
     AVMediaType codec_type;
+    Stream* stream;
     
     OMXPacket()
     {
@@ -360,7 +346,7 @@ public:
         now  = DVD_NOPTS_VALUE;
         duration = DVD_NOPTS_VALUE;
         codec_type = AVMEDIA_TYPE_UNKNOWN;
-        hintsAreValid = false;
+        stream = NULL;
     }
     
     double ConvertTimestamp(AVFormatContext* avFormatContext, int64_t pts, int den, int num)
@@ -392,15 +378,17 @@ public:
         
         return timestamp*DVD_TIME_BASE;
     }
-
-
     
-    void setup(AVPacket* avPacket, AVFormatContext* avFormatContext, AVStream* avStream)
+    
+    
+    void setup(AVPacket* avPacket, AVFormatContext* avFormatContext, Stream* stream_)
     {
+        
         if(!avPacket)
         {
             ofLogVerbose() << "PACKET IS NULL";
         }
+
         size = avPacket->size;
         //ofLogVerbose() << "FF_INPUT_BUFFER_PADDING_SIZE: " << FF_INPUT_BUFFER_PADDING_SIZE;
         if(avPacket->data)
@@ -411,18 +399,26 @@ public:
         {
             data = NULL;
         }
-        codec_type = avStream->codec->codec_type;
+        
+        
+        stream = stream_;
         
         
         stream_index = avPacket->stream_index;
-        Stream stream;
-        if(stream.setup(avStream))
+        if(!stream)
         {
-            hintsAreValid = true;
-            ofLogVerbose () << "hasAudio: " << stream.hasAudio;
-            ofLogVerbose () << "hasVideo: " << stream.hasVideo;
-            hints =  stream.streamInfo;
+            ofLogError() << "NO STREAM!";
+            STALL;
         }
+        AVStream* avStream = stream->avStream;
+        
+        if(!avStream)
+        {
+            ofLogError() << "NO avStream!";
+            STALL;
+        }
+        codec_type = avStream->codec->codec_type;
+        
         
         dts = ConvertTimestamp(avFormatContext, avPacket->dts, avStream->time_base.den, avStream->time_base.num);
         pts = ConvertTimestamp(avFormatContext, avPacket->pts, avStream->time_base.den, avStream->time_base.num);
@@ -452,7 +448,7 @@ public:
             }
         }        
         
-
+        
     }
     string toString()
     {
@@ -462,9 +458,9 @@ public:
         info << "duration: " << duration << endl;
         info << "size: " << size << endl;
         info << "stream_index: " << stream_index << endl;
-        if(hintsAreValid)
+        if(stream)
         {
-            info << "hints: " << hints.toString() << endl;
+            info << "stream: " << stream->toString() << endl;
         }
         
         return info.str();
@@ -490,9 +486,9 @@ public:
     };
     
     
-    vector<Stream> audioStreams;
-    vector<Stream> videoStreams;
-    vector<Stream> otherStreams;
+    vector<Stream*> audioStreams;
+    vector<Stream*> videoStreams;
+    vector<Stream*> otherStreams;
     Stream* videoStream;
     ofFile file;
     AVFormatContext* avFormatContext;
@@ -501,11 +497,14 @@ public:
     AVInputFormat* avInputFormat;
     AVDictionary* avDictionary;
     unsigned char* avIOContextBuffer;
-    static const bool doAbort = false; 
-    vector<AVPacket> avPackets;
     vector<OMXPacket*> omxPackets;
     
     BufferData bufferData;
+    
+    
+    static const bool doAbort = false; 
+    int numStreams;
+    map<int, Stream*> streamMap;
     VideoFile()
     {
         avFormatContext = NULL;
@@ -513,7 +512,18 @@ public:
         avDictionary = NULL;
         avIOContextBuffer=NULL;
         videoStream = NULL;
+        numStreams = 0;
     }
+    
+    ~VideoFile()
+    {
+        if(avDictionary)
+        {
+            av_dict_free(&avDictionary); 
+            avDictionary = NULL;
+        }
+    }
+    
     bool hasAudio()
     {
         return !audioStreams.empty();
@@ -526,7 +536,7 @@ public:
     
     
     
- 
+    
     
     static int onInterrupt(void*)
     {
@@ -541,7 +551,7 @@ public:
     static int onWritePacket(void* bufferData_, uint8_t* buffer, int bufferSize)
     {
         ofLogVerbose() << "onWritePacket";
-
+        
         if(onInterrupt(NULL))
         {
             return -1;
@@ -610,73 +620,75 @@ public:
         return info.str();
     }
     
+    string getAvPacketInfo(AVPacket&  pkt)
+    {
+        stringstream info;
+        info << "pts: " << pkt.pts << endl;
+        info << "dts: " << pkt.dts << endl;
+        info << "size: " << pkt.size << endl;
+        info << "stream_index: " << pkt.stream_index << endl;
+        info << "isKeyFrame: " << (pkt.flags & AV_PKT_FLAG_KEY) << endl;
+        info << "isCorrupt: " << (pkt.flags & AV_PKT_FLAG_CORRUPT) << endl;
+        info << "hasSideData: " << !(pkt.side_data == NULL) << endl;
+        info << "side_data_elems: " << pkt.side_data_elems << endl;
+        info << "duration: " << pkt.duration << endl;
+        info << "pos: " << pkt.pos << endl;
+        info << "convergence_duration: " << pkt.convergence_duration << endl;
+        
+        return info.str();
+    }
     
     bool read()
     {
         bool result = true;
         AVPacket  pkt;
-        
-        if(avFormatContext->pb)
-        {
-            avFormatContext->pb->eof_reached = 0;
-            //result = false;
-        }
-        // keep track if ffmpeg doesn't always set these
         pkt.size = 0;
         pkt.data = NULL;
         pkt.stream_index = avFormatContext->nb_streams;
+        
+        if(avIOContext)
+        {
+            avIOContext->eof_reached = 0;
+            //result = false;
+        }
+        
         
         int frameCode = av_read_frame(avFormatContext, &pkt);
         ofLogVerbose() << "frameCode: " << frameCode;
         if (frameCode < 0)
         {
-            //ofLogVerbose(__func__) << "END OF FILE";
+            ofLogVerbose(__func__) << "END OF FILE";
             result = false;
+            STALL;
         }else
         {
-            stringstream info;
             
-            info << endl;
-            info << "id: " << omxPackets.size() << endl;
-            info << "pts: " << pkt.pts << endl;
-            info << "dts: " << pkt.dts << endl;
-            info << "size: " << pkt.size << endl;
-            info << "stream_index: " << pkt.stream_index << endl;
-            info << "isKeyFrame: " << (pkt.flags & AV_PKT_FLAG_KEY) << endl;
-            info << "isCorrupt: " << (pkt.flags & AV_PKT_FLAG_CORRUPT) << endl;
-            info << "hasSideData: " << !(pkt.side_data == NULL) << endl;
-            info << "side_data_elems: " << pkt.side_data_elems << endl;
-            info << "duration: " << pkt.duration << endl;
-            info << "pos: " << pkt.pos << endl;
-            info << "convergence_duration: " << pkt.convergence_duration << endl;
-            ofLogVerbose() << "info: " << info.str();
+            ofLogVerbose() << "omxPackets.size(): " << omxPackets.size();
             
-            AVStream* avStream = avFormatContext->streams[pkt.stream_index];
-#if 0
-            OMXPacket omxPacket;
-            omxPacket.setup(&pkt, avFormatContext, avStream);
-            omxPackets.push_back(&omxPacket);
+            ofLogVerbose() << "AvPacketInfo: " << endl << getAvPacketInfo(pkt);
+
+            Stream* stream = streamMap[pkt.stream_index];
+            if(stream)
+            {
+                OMXPacket omxPacket;
+                omxPacket.setup(&pkt, avFormatContext, stream);
+                omxPackets.push_back(&omxPacket);
+                ofLogVerbose() << "omxPacket: " << omxPacket.toString();
+            }
             
-            info << endl;
-            info << omxPacket.toString() << endl;
-            ofLogVerbose() << "info: " << info.str();
-#endif
             
-            //avPackets.push_back(pkt);
-            printf("avIOContext avFormatContext->pb %p %p \n", avIOContext, avFormatContext->pb);
 
             ofLogVerbose() << getIOContextInfo(avFormatContext->pb);
             STALL;
-            /*
-            if (pkt.size < 0 || pkt.stream_index >= MAX_OMX_STREAMS)
+            
+            if (pkt.size < 0 || pkt.stream_index >= numStreams)
             {
-                // XXX, in some cases ffmpeg returns a negative packet size
+                //in some cases ffmpeg returns a negative packet size
                 if(avFormatContext->pb && !avFormatContext->pb->eof_reached)
                 {
-                    ofLogError(__func__) << "negative packet size" << pkt.size;s
+                    ofLogError(__func__) << "negative packet size" << pkt.size;
                 }
-            }
-            AVStream* avStream = avFormatContext->streams[pkt.stream_index];*/
+            }            
         }
         av_free_packet(&pkt);
         return result;
@@ -702,18 +714,17 @@ public:
         
         avFormatContext->interrupt_callback = interruptCallback;
         
-   
+        
         
         int result = 0;
         
-       
+        
         
         bool isStream = false;
         
         if(isStream)
         {
             result = avformat_open_input(&avFormatContext, videoPath.c_str(), avInputFormat, &avDictionary);
-            av_dict_free(&avDictionary);
         }
         else
         {
@@ -727,7 +738,7 @@ public:
             
             bufferData.ptr  = buffer;
             bufferData.size  = bufferSize;
-
+            
             int write_flag = 0;
             size_t avIOContextBufferSize = 4096;
             avIOContextBuffer = (unsigned char*)av_malloc(avIOContextBufferSize);
@@ -754,7 +765,7 @@ public:
                                                     maxProbeSize);
             ofLogVerbose() << "probeResult: " << probeResult;
             STALL;
-
+            
             
             int openInputResult = avformat_open_input(&avFormatContext, videoPath.c_str(), avInputFormat, &avDictionary);
             ofLogVerbose() << "openInputResult: " << openInputResult;
@@ -763,7 +774,7 @@ public:
                 ofLogVerbose() << "AVERROR_INVALIDDATA";
                 STALL;
             }
-
+            
             avFormatContext->pb = avIOContext;
             
             int infoResult = avformat_find_stream_info(avFormatContext, NULL);
@@ -773,47 +784,52 @@ public:
             ofLogVerbose() << "numPrograms: " << numPrograms;
             
             ofLogVerbose() << "avIOContext getIOContextInfo: " << getIOContextInfo(avIOContext);
-            ofLogVerbose() << "avFormatContext->nb_streams: " << avFormatContext->nb_streams;
             
-            STALL;
             
-            for (size_t i = 0; i < avFormatContext->nb_streams; i++)
+            numStreams = avFormatContext->nb_streams;
+            
+            
+            for (size_t i = 0; i < numStreams; i++)
             {
-                Stream stream;
-                bool isValidStream = stream.setup(avFormatContext->streams[i]);
+                Stream* stream = new Stream();
+                streamMap[i] = stream;
+                
+                bool isValidStream = stream->setup(avFormatContext->streams[i]);
                 if(isValidStream)
                 {
-                    if(stream.hasVideo)
+                    if(stream->hasVideo)
                     {
                         videoStreams.push_back(stream);
                     }else
                     {
-                        if(stream.hasAudio)
+                        if(stream->hasAudio)
                         {
                             audioStreams.push_back(stream);
                         }
                         
                     }
-                    ofLogVerbose() << stream.streamInfo.toString();
+                    ofLogVerbose() << stream->toString();
                 }else
                 {
                     otherStreams.push_back(stream);
                 }
+                
+                ofLogVerbose() << "STREAM INFO " << i << stream->toString();
+                
             }
-            ofLogVerbose() << "hasAudio(): " << hasAudio();
-            ofLogVerbose() << "hasVideo(): " << hasVideo();
+
             ofLogVerbose() << "audioStreams: " << audioStreams.size();
             ofLogVerbose() << "videoStreams: " << videoStreams.size();
             ofLogVerbose() << "otherStreams: " << otherStreams.size();
             STALL;
-
+            
             
             bool isOutput = false;
             int index = 0;
             av_dump_format(avFormatContext, index, videoPath.c_str(), isOutput);
             
             av_file_unmap(buffer, bufferSize);
-
+            
             
         }
         
@@ -827,13 +843,17 @@ public:
         
         if(hasVideo())
         {
-            result =  &videoStreams.front();
+            if(!videoStreams.empty())
+            {
+                result =  videoStreams.front();
+            }
+            
         }else
         {
             ofLogError(__func__) << "NO VIDEOS";
         }
         return result;
     };
-
+    
     
 };

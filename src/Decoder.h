@@ -103,10 +103,9 @@ public:
         formatType.nPortIndex = VIDEO_DECODER_INPUT_PORT;
         formatType.eCompressionFormat = OMX_VIDEO_CodingAVC;
         
-        StreamInfo& streamInfo = stream->streamInfo;
-        if (streamInfo.fpsScale > 0 && streamInfo.fpsRate > 0)
+        if (stream->fpsScale > 0 && stream->fpsRate > 0)
         {
-            formatType.xFramerate = (long long)(1<<16) * streamInfo.fpsRate / streamInfo.fpsScale;
+            formatType.xFramerate = (long long)(1<<16) * stream->fpsRate / stream->fpsScale;
         }
         else
         {
@@ -126,8 +125,8 @@ public:
         OMX_TRACE(error);
         
         portParam.nBufferCountActual = 20;
-        portParam.format.video.nFrameWidth  = streamInfo.width;
-        portParam.format.video.nFrameHeight = streamInfo.height;
+        portParam.format.video.nFrameWidth  = stream->width;
+        portParam.format.video.nFrameHeight = stream->height;
         error = OMX_SetParameter(decoder, OMX_IndexParamPortDefinition, &portParam);
         OMX_TRACE(error);
         
@@ -139,10 +138,10 @@ public:
         error = OMX_SetParameter(decoder, OMX_IndexParamBrcmVideoDecodeErrorConcealment, &concanParam);
         OMX_TRACE(error);
         
-        ofLogVerbose() << "streamInfo.doFormatting: " << streamInfo.doFormatting;
+        ofLogVerbose() << "stream->doFormatting: " << stream->doFormatting;
         
         //
-        if(streamInfo.doFormatting)
+        if(stream->doFormatting)
         {
             OMX_NALSTREAMFORMATTYPE nalStreamFormat;
             OMX_INIT_STRUCTURE(nalStreamFormat);
