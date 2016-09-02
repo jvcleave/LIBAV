@@ -272,7 +272,11 @@ public:
         while(videoFile->read())
         {
             counter++;
-            ofLog() << counter;
+        }
+        
+        for (size_t i=0; i<videoFile->omxPackets.size(); i++) 
+        {
+            //ofLog() << i << endl << videoFile->omxPackets[i]->toString();
         }
     }
     
