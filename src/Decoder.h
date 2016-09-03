@@ -3,6 +3,52 @@
 #include "Clock.h"
 #include "VideoFile.h"
 
+class CriticalSection
+{
+public:
+    inline CriticalSection()
+    {
+        pthread_mutexattr_t mta;
+        pthread_mutexattr_init(&mta);
+        pthread_mutexattr_settype(&mta, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&m_lock, &mta);
+    }
+    inline ~CriticalSection()
+    {
+        pthread_mutex_destroy(&m_lock);
+    }
+    inline void lock()
+    {
+        pthread_mutex_lock(&m_lock);
+    }
+    inline void unlock()
+    {
+        pthread_mutex_unlock(&m_lock);
+    }
+    
+protected:
+    pthread_mutex_t m_lock;
+};
+
+
+class SingleLock
+{
+public:
+    inline SingleLock(CriticalSection& cs)
+    {
+        section = cs;
+        section.lock();
+    }
+    inline ~SingleLock()
+    {
+        section.unlock();
+    }
+    
+protected:
+    CriticalSection section;
+};
+//#define STALL(x) ofSleepMillis(x*1000);
+#define STALL(x) 
 class Decoder
 {
 public:
@@ -17,6 +63,11 @@ public:
     vector<OMX_BUFFERHEADERTYPE*> decoderInputBuffers;
     queue<OMX_BUFFERHEADERTYPE*> decoderInputBuffersAvailable;
     int packetCounter = 0;
+    bool doSetStartTime;
+    pthread_cond_t  m_input_buffer_cond;
+    pthread_mutex_t   m_omx_input_mutex;
+    CriticalSection  m_critSection;
+    double currentPTS;
     /*
     static OMX_ERRORTYPE onDecoderEmptyBufferDone(OMX_HANDLETYPE, OMX_PTR, OMX_BUFFERHEADERTYPE*);
     static OMX_ERRORTYPE onDecoderFillBufferDone(OMX_HANDLETYPE, OMX_PTR, OMX_BUFFERHEADERTYPE*);
@@ -34,7 +85,16 @@ public:
     static OMX_ERRORTYPE nullFillBufferDone(OMX_HANDLETYPE, OMX_PTR,OMX_BUFFERHEADERTYPE*){return OMX_ErrorNone;};
     static OMX_ERRORTYPE nullEventHandlerCallback(OMX_HANDLETYPE, OMX_PTR, OMX_EVENTTYPE, OMX_U32, OMX_U32, OMX_PTR) {return OMX_ErrorNone;};
     */
-
+    static void add_timespecs(struct timespec& time, long millisecs)
+    {
+        time.tv_sec  += millisecs / 1000;
+        time.tv_nsec += (millisecs % 1000) * 1000000;
+        if (time.tv_nsec > 1000000000)
+        {
+            time.tv_sec  += 1;
+            time.tv_nsec -= 1000000000;
+        }
+    }
 
     
     Decoder()
@@ -43,9 +103,74 @@ public:
         videoFile = NULL;
         stream = NULL;
         packetCounter = 0;
+        currentPTS = 0;
+        doSetStartTime = true;
+        pthread_mutex_init(&m_omx_input_mutex, NULL);
+        pthread_cond_init(&m_input_buffer_cond, NULL);
+
     }
     
-    
+    OMX_ERRORTYPE createTunnel(OMX_HANDLETYPE source, int sourcePort, 
+                               OMX_HANDLETYPE destination, int destinationPort)
+    {
+        
+        OMX_ERRORTYPE error = OMX_ErrorNone;
+        error = OMX_SendCommand(source, OMX_CommandStateSet, OMX_StateIdle, NULL);
+        if(error != OMX_ErrorNone)
+        {
+            ofLogError() << "Could not set source to Idle";
+            return error;
+        }
+
+
+        error = OMX_SendCommand(source, OMX_CommandPortDisable, sourcePort, NULL);
+        if(error != OMX_ErrorNone)
+        {
+            ofLogError() << "Could not disable source port " << sourcePort;
+            return error;
+        }
+        
+        
+        error = OMX_SendCommand(destination, OMX_CommandStateSet, OMX_StateIdle, NULL);
+        if(error != OMX_ErrorNone)
+        {
+            ofLogError() << "Could not set destination to Idle";
+            return error;
+        }
+        
+        
+        error = OMX_SendCommand(destination, OMX_CommandPortDisable, destinationPort, NULL);
+        if(error != OMX_ErrorNone)
+        {
+            ofLogError() << "Could not disable destinationPort " << destinationPort;
+            return error;
+        }
+        
+        error = OMX_SetupTunnel(source, sourcePort, destination, destinationPort);
+        if(error != OMX_ErrorNone)
+        {
+            ofLogError() << "Could not set up Tunnel from sourcePort, destinationPort" << sourcePort << " -> " << destinationPort;
+            return error;
+        }
+
+        
+        error = OMX_SendCommand(source, OMX_CommandPortEnable, sourcePort, NULL);
+        if(error != OMX_ErrorNone)
+        {
+            ofLogError() << "Could not enable sourcePort " << sourcePort;
+            return error;
+        }
+        
+        
+        
+        error = OMX_SendCommand(destination, OMX_CommandPortEnable, destinationPort, NULL);
+        if(error != OMX_ErrorNone)
+        {
+            ofLogError() << "Could not enable destinationPort " << destinationPort;
+            return error;
+        }
+        return error;
+    }
         
     void setup(Clock* clock_, VideoFile* videoFile_)
     {
@@ -97,15 +222,19 @@ public:
         
         
         //clock->scheduler
-        error = OMX_SetupTunnel(clock->handle, OMX_CLOCK_OUTPUT_PORT0, scheduler, VIDEO_SCHEDULER_CLOCK_PORT);
-        OMX_TRACE(error, "clock->scheduler TUNNEL");
-        
+        error = createTunnel(clock->handle, OMX_CLOCK_OUTPUT_PORT0, scheduler, VIDEO_SCHEDULER_CLOCK_PORT);
+        OMX_TRACE(error);
+        if(error == OMX_ErrorNone)
+        {
+            ofLogVerbose() << "clock->scheduler SUCCESS";
+        }
+        STALL(3);
         
         
         OMX_VIDEO_PARAM_PORTFORMATTYPE formatType;
         OMX_INIT_STRUCTURE(formatType);
         formatType.nPortIndex = VIDEO_DECODER_INPUT_PORT;
-        formatType.eCompressionFormat = OMX_VIDEO_CodingAVC;
+        formatType.eCompressionFormat = stream->omxCodingType;
         
         if (stream->fpsScale > 0 && stream->fpsRate > 0)
         {
@@ -215,27 +344,25 @@ public:
         }
         
         
-        
-        //decoder->scheduler
-        error = OMX_SetupTunnel(decoder, VIDEO_DECODER_OUTPUT_PORT, scheduler, VIDEO_SCHEDULER_INPUT_PORT);
-        OMX_TRACE(error);
-        
-        //scheduler->renderer
-        error = OMX_SetupTunnel(scheduler, VIDEO_SCHEDULER_OUTPUT_PORT, renderer, VIDEO_RENDER_INPUT_PORT);
-        OMX_TRACE(error);
-        
 
-        //renderer to Idle
-        error = OMX_SendCommand(renderer, OMX_CommandStateSet, OMX_StateIdle, NULL);
-        OMX_TRACE(error);
-        error = OMX_GetState(renderer, &state);
-        OMX_TRACE(error);
-
-        //enable render input
-        error = OMX_SendCommand(renderer, OMX_CommandPortEnable, VIDEO_RENDER_INPUT_PORT, NULL);
+        
+        error = createTunnel(decoder, VIDEO_DECODER_OUTPUT_PORT, scheduler, VIDEO_SCHEDULER_INPUT_PORT);
         OMX_TRACE(error);
         
-    
+        if(error == OMX_ErrorNone)
+        {
+            ofLogVerbose() << "decoder->scheduler SUCCESS";
+        }
+        STALL(3);
+            
+        error = createTunnel(scheduler, VIDEO_SCHEDULER_OUTPUT_PORT, renderer, VIDEO_RENDER_INPUT_PORT);
+        OMX_TRACE(error);
+        if(error == OMX_ErrorNone)
+        {
+            ofLogVerbose() << "scheduler->renderer SUCCESS";
+        }
+        STALL(3);
+        
         //allocate render input buffers (unused with direct)
         portFormat.nPortIndex = VIDEO_RENDER_INPUT_PORT;
         error = OMX_GetParameter(renderer, OMX_IndexParamPortDefinition, &portFormat);
@@ -267,7 +394,7 @@ public:
         //start scheduler
         error = OMX_SendCommand(scheduler, OMX_CommandStateSet, OMX_StateExecuting, 0);
         OMX_TRACE(error);
-        
+        STALL(3);
         //start renderer
         error = OMX_SendCommand(renderer, OMX_CommandStateSet, OMX_StateExecuting, 0);
         OMX_TRACE(error);
@@ -283,38 +410,32 @@ public:
         error = OMX_SetConfig(renderer, OMX_IndexConfigDisplayRegion, &displayConfig);
         OMX_TRACE(error);
        
-        ofSleepMillis(2000);
         
-        while(videoFile->read())
+        if(stream->codecExtraSize > 0 && stream->codecExtraData != NULL)
         {
-            counter++;
-        }
-        
-        
-        if(videoFile->getBestVideoStream()->codecExtraSize > 0 && videoFile->getBestVideoStream()->codecExtraData != NULL)
-        {
-            int extraSize = videoFile->getBestVideoStream()->codecExtraSize;
+            int extraSize = stream->codecExtraSize;
             uint8_t* extraData = (uint8_t *)malloc(extraSize);
-            memcpy(extraData, videoFile->getBestVideoStream()->codecExtraData, extraSize);
+            memcpy(extraData, stream->codecExtraData, extraSize);
             
-            OMX_BUFFERHEADERTYPE* omxBuffer = NULL;
-            if(!decoderInputBuffersAvailable.empty())
+            OMX_BUFFERHEADERTYPE* omxBuffer = getInputBuffer(500);
+            if(omxBuffer)
             {
-                omxBuffer = decoderInputBuffersAvailable.front();
-                decoderInputBuffersAvailable.pop();
                 omxBuffer->nOffset = 0;
                 omxBuffer->nFilledLen = extraSize;
                 memset((unsigned char *)omxBuffer->pBuffer, 0x0, omxBuffer->nAllocLen);
                 memcpy((unsigned char *)omxBuffer->pBuffer, extraData, omxBuffer->nFilledLen);
                 omxBuffer->nFlags = OMX_BUFFERFLAG_CODECCONFIG | OMX_BUFFERFLAG_ENDOFFRAME;
-                error = OMX_EmptyThisBuffer(decoder, omxBuffer);
-                OMX_TRACE(error);
+                error = OMX_EmptyThisBuffer(decoder, omxBuffer); 
+            }else
+            {
+                ofLogError() << "NO INPUT BUFFER";
+                STALL(2);
+
             }
             
         }  
         
     }
-    bool doSetStartTime = true;
     
     
     OMX_TICKS ToOMXTime(int64_t pts)
@@ -331,20 +452,66 @@ public:
         return pts;
     }
     
+    
+    
+    
+    
+    OMX_BUFFERHEADERTYPE* getInputBuffer(long timeout)
+    {
+        if(!decoder) 
+        {
+            ofLogError(__func__) << " NO decoder";
+        }
+        
+        OMX_BUFFERHEADERTYPE* inputBuffer = NULL;
+        
+        
+        pthread_mutex_lock(&m_omx_input_mutex);
+        struct timespec endtime;
+        clock_gettime(CLOCK_REALTIME, &endtime);
+        add_timespecs(endtime, timeout);
+        while (1)
+        {
+            if(!decoderInputBuffersAvailable.empty())
+            {
+                inputBuffer = decoderInputBuffersAvailable.front();
+                decoderInputBuffersAvailable.pop();
+                break;
+            }
+            
+            int retcode = pthread_cond_timedwait(&m_input_buffer_cond, &m_omx_input_mutex, &endtime);
+            if (retcode != 0)
+            {
+                ofLogError(__func__) << "DECODER TIMEOUT AT: " << timeout;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&m_omx_input_mutex);
+        return inputBuffer;
+    }
+
     void decodeNext()
     {
-        ofLogVerbose() << "decodeNext: " << packetCounter;
         packetCounter++;
-        decode(videoFile->omxPackets[packetCounter]);
+        if(packetCounter<videoFile->omxPackets.size())
+        {
+            decodeOMXPacket(videoFile->omxPackets[packetCounter]);
+        }else
+        {
+            ofLogVerbose() << "END OF PACKETS";
+            STALL(5);
+            ofExit();
+        }
+        
     }
-    bool decode(OMXPacket* pkt)
+    bool decodeOMXPacket(OMXPacket* pkt)
     {
         
         if(!pkt)
         {
             return false;
         }
-        double currentPTS=0;
+        
         bool result = false;
         double pts = pkt->pts;
         double dts = pkt->dts;
@@ -359,13 +526,28 @@ public:
             currentPTS = pts;
         }
         
-        ofLog(OF_LOG_VERBOSE, "decode dts:%.0f pts:%.0f cur:%.0f, size:%d", pkt->dts, pkt->pts, currentPTS, pkt->size);
-        decode(pkt->data, pkt->size, dts, pts);
+        stringstream info;
+        info << endl;
+        info << "packetCounter: " << packetCounter << endl;
+        info << "pts: " << pts << endl;
+        info << "pkt->pts: " << pkt->pts << endl;
+        info << "dts: " << dts << endl;
+        info << "pkt->dts: " << pkt->dts << endl;
+        info << "currentPTS: " << currentPTS << endl;
+        info << "getMediaTime: " << clock->getMediaTime();
+
+        ofLogVerbose(__func__) << info.str();
+        
+        //ofLog(OF_LOG_VERBOSE, "decode dts:%.0f pts:%.0f cur:%.0f, size:%d", pkt->dts, pkt->pts, currentPTS, pkt->size);
+        result = decode(pkt->data, pkt->size, dts, pts);
         
         return result;
     }
     bool decode(uint8_t* demuxer_content, int iSize, double dts, double pts)
     {
+        
+        //SingleLock lock (m_critSection);
+        
         OMX_ERRORTYPE error;
         
         unsigned int demuxer_bytes = (unsigned int)iSize;
@@ -406,25 +588,20 @@ public:
                     ofLog() << "USING demuxer_bytes: " << demuxer_bytes;
 
                     omxBuffer->nFilledLen = demuxer_bytes;
-                }
-                ofLog() << "PRE COPY";
-                
+                }                
                 ofLog() << "demuxer_bytes: " << demuxer_bytes;
-                ofLog() << "demuxer_content: " << demuxer_content;
                 ofLog() << "omxBuffer->nFilledLen: " << omxBuffer->nFilledLen;
                 ofLog() << "omxBuffer->nTimeStamp: " << FromOMXTime(omxBuffer->nTimeStamp);
 
                 memcpy(omxBuffer->pBuffer, demuxer_content, omxBuffer->nFilledLen);
-                ofLog() << "POST COPY";
 
                 demuxer_bytes -= omxBuffer->nFilledLen;
                 demuxer_content += omxBuffer->nFilledLen;
-                
 
 
                 if(demuxer_bytes == 0)
                 {
-                    //ofLogVerbose(__func__) << "OMX_BUFFERFLAG_ENDOFFRAME";
+                    ofLogVerbose(__func__) << "OMX_BUFFERFLAG_ENDOFFRAME";
                     omxBuffer->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
                 }
                 error = OMX_EmptyThisBuffer(decoder, omxBuffer);
@@ -563,7 +740,17 @@ public:
     {	
         ofLogVerbose(__func__) << "";
         Decoder* myDecoder = (Decoder*)pAppData;
+        
+        
+        
+        pthread_mutex_lock(&myDecoder->m_omx_input_mutex);
         myDecoder->decoderInputBuffersAvailable.push(pBuffer);
+        
+        // this allows (all) blocked tasks to be awoken
+        pthread_cond_broadcast(&myDecoder->m_input_buffer_cond);
+        
+        pthread_mutex_unlock(&myDecoder->m_omx_input_mutex);
+        
         myDecoder->decodeNext();
         return OMX_ErrorNone;
     }

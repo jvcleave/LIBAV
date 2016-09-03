@@ -29,6 +29,9 @@ extern "C"
 #include <libavformat/avformat.h>
     
 }
+
+#include <IL/OMX_Video.h>
+
 //define STALL ofSleepMillis(2000)
 #define STALL
 #define MAX_OMX_STREAMS        100
@@ -57,10 +60,11 @@ public:
     bool        hasVideo;
     bool isValid;
     
-    AVCodecID codec;
+    AVCodecID codecID;
     AVMediaType mediaType;
     bool forceSoftwareDecoding;  //force software decoding
-    
+    OMX_VIDEO_CODINGTYPE omxCodingType;
+
     // VIDEO
     int fpsScale; // scale of 1000 and a rate of 29970 will result in 29.97 fps
     int fpsRate;
@@ -130,7 +134,8 @@ public:
         codecExtraData = NULL;
         codecExtraSize = 0;
         codecTag = 0;
-        
+        codecID = AV_CODEC_ID_NONE;
+
         framesize = 0;
         syncword = 0;
         isAVI = false;
@@ -138,11 +143,12 @@ public:
         doFormatting = false;
         mediaTypeString = "";
         mediaType = AVMEDIA_TYPE_UNKNOWN;
+        omxCodingType   = OMX_VIDEO_CodingUnused;
     }
     
-    bool NaluFormatStartCodes(enum AVCodecID codec, unsigned char *in_extradata, int in_extrasize)
+    bool NaluFormatStartCodes(unsigned char *in_extradata, int in_extrasize)
     {
-        switch(codec)
+        switch(codecID)
         {
             case AV_CODEC_ID_H264:
             {
@@ -165,6 +171,7 @@ public:
     bool setup(AVStream* avStream_)
     {
         avStream = avStream_;
+        codecID = avStream->codec->codec_id;
         mediaType = avStream->codec->codec_type;
         switch (mediaType)
         {
@@ -215,7 +222,7 @@ public:
         }
         if(isValid)
         {
-            
+            processCodec();
             //codecExtraData      = avStream->codec->extradata;
             //codecExtraSize      = avStream->codec->extradata_size;
             audioChannels       = avStream->codec->channels;
@@ -242,7 +249,7 @@ public:
                 memcpy(codecExtraData, avStream->codec->extradata, avStream->codec->extradata_size);
                 ofLogVerbose(__func__) << "codecExtraSize: " << codecExtraSize;
             }
-            doFormatting = NaluFormatStartCodes(codec, codecExtraData, codecExtraSize);
+            doFormatting = NaluFormatStartCodes(codecExtraData, codecExtraSize);
             ofLogVerbose(__func__) << "doFormatting: " << doFormatting;
             
             if(avStream->codec->codec_type == AVMEDIA_TYPE_VIDEO)
@@ -296,7 +303,90 @@ public:
         }
         return isValid;
     }
-    
+    void processCodec()
+    {
+        switch (codecID)
+        {
+            case AV_CODEC_ID_H264:
+            {
+                switch(avStream->codec->profile)
+                {
+                    case FF_PROFILE_H264_BASELINE:
+                        // (role name) video_decoder.avc
+                        // H.264 Baseline profile
+                        omxCodingType = OMX_VIDEO_CodingAVC;
+                        break;
+                    case FF_PROFILE_H264_MAIN:
+                        // (role name) video_decoder.avc
+                        // H.264 Main profile
+                        omxCodingType = OMX_VIDEO_CodingAVC;
+                        break;
+                    case FF_PROFILE_H264_HIGH:
+                        // (role name) video_decoder.avc
+                        // H.264 Main profile
+                        omxCodingType = OMX_VIDEO_CodingAVC;
+                        break;
+                    case FF_PROFILE_UNKNOWN:
+                        omxCodingType = OMX_VIDEO_CodingAVC;
+                        break;
+                    default:
+                        omxCodingType = OMX_VIDEO_CodingAVC;
+                        break;
+                }
+            }
+                break;
+            case AV_CODEC_ID_MPEG4:
+                // (role name) video_decoder.mpeg4
+                // MPEG-4, DivX 4/5 and Xvid compatible
+                omxCodingType = OMX_VIDEO_CodingMPEG4;
+                break;
+            case AV_CODEC_ID_MPEG1VIDEO:
+            case AV_CODEC_ID_MPEG2VIDEO:
+                // (role name) video_decoder.mpeg2
+                // MPEG-2
+                omxCodingType = OMX_VIDEO_CodingMPEG2;
+                break;
+            case AV_CODEC_ID_H263:
+                // (role name) video_decoder.mpeg4
+                // MPEG-4, DivX 4/5 and Xvid compatible
+                omxCodingType = OMX_VIDEO_CodingMPEG4;
+                break;
+            case AV_CODEC_ID_VP6:
+            case AV_CODEC_ID_VP6F:
+            case AV_CODEC_ID_VP6A:
+                // (role name) video_decoder.vp6
+                // VP6
+                omxCodingType = OMX_VIDEO_CodingVP6;
+                break;
+            case AV_CODEC_ID_VP8:
+                // (role name) video_decoder.vp8
+                // VP8
+                omxCodingType = OMX_VIDEO_CodingVP8;
+                break;
+            case AV_CODEC_ID_THEORA:
+                // (role name) video_decoder.theora
+                // theora
+                omxCodingType = OMX_VIDEO_CodingTheora;
+                break;
+            case AV_CODEC_ID_MJPEG:
+            case AV_CODEC_ID_MJPEGB:
+                // (role name) video_decoder.mjpg
+                // mjpg
+                omxCodingType = OMX_VIDEO_CodingMJPEG;
+                break;
+            case AV_CODEC_ID_VC1:
+            case AV_CODEC_ID_WMV3:
+                // (role name) video_decoder.vc1
+                // VC-1, WMV9
+                omxCodingType = OMX_VIDEO_CodingWMV;
+                break;
+            default:
+                omxCodingType = OMX_VIDEO_CodingUnused;
+                ofLog(OF_LOG_VERBOSE, "Video codec id unknown: %x\n", codecID);
+                break;
+        }
+    }
+
     string toString()
     {
         stringstream info;
@@ -521,6 +611,12 @@ public:
     static const bool doAbort = false; 
     int numStreams;
     map<int, Stream*> streamMap;
+    
+    
+    
+    
+        
+    
     VideoFile()
     {
         avFormatContext = NULL;
@@ -684,13 +780,16 @@ public:
             ofLogVerbose() << "AvPacketInfo: " << endl << getAvPacketInfo(pkt);
 
             Stream* stream = streamMap[pkt.stream_index];
-            if(stream)
+            if(stream && stream->hasVideo)
             {
-                OMXPacket omxPacket;
-                if(omxPacket.setup(&pkt, avFormatContext, stream))
+                OMXPacket* omxPacket = new OMXPacket();
+                if(omxPacket->setup(&pkt, avFormatContext, stream))
                 {
-                    omxPackets.push_back(&omxPacket);
-                    ofLogVerbose() << "omxPacket: " << omxPacket.toString();
+                    omxPackets.push_back(omxPacket);
+                    //ofLogVerbose() << "omxPacket: " << omxPacket->toString(); 
+                }else
+                {
+                    delete omxPacket;
                 }
                 
             }
@@ -852,6 +951,12 @@ public:
             
         }
         
+        int counter = 0;
+        while(read())
+        {
+            counter++;
+            ofLog() << "counter: " << counter;
+        }
         ofLogVerbose() << "result: " << result;
         
     }

@@ -110,4 +110,30 @@ public:
         OMX_TRACE(error);
     }
     
+    double getMediaTime()
+    {
+        
+        
+        OMX_ERRORTYPE error = OMX_ErrorNone;
+        double pts = 0;
+        
+        OMX_TIME_CONFIG_TIMESTAMPTYPE timeStamp;
+        OMX_INIT_STRUCTURE(timeStamp);
+        timeStamp.nPortIndex = OMX_CLOCK_OUTPUT_PORT0;
+        error = OMX_GetConfig(handle, OMX_IndexConfigTimeCurrentMediaTime, &timeStamp);
+        
+        if(error != OMX_ErrorNone)
+        {
+            ofLogError(__func__) << "FAIL";
+            ofSleepMillis(5000);
+            return 0;
+        }
+        
+        pts = (double)FromOMXTime(timeStamp.nTimestamp);
+        
+        return pts;
+    }
+
+    
+    
 };
