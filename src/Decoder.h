@@ -13,7 +13,10 @@ public:
     OMX_HANDLETYPE renderer;
     OMX_HANDLETYPE scheduler;
     OMX_HANDLETYPE imageEffects;
-
+    
+    vector<OMX_BUFFERHEADERTYPE*> decoderInputBuffers;
+    queue<OMX_BUFFERHEADERTYPE*> decoderInputBuffersAvailable;
+    int packetCounter = 0;
     /*
     static OMX_ERRORTYPE onDecoderEmptyBufferDone(OMX_HANDLETYPE, OMX_PTR, OMX_BUFFERHEADERTYPE*);
     static OMX_ERRORTYPE onDecoderFillBufferDone(OMX_HANDLETYPE, OMX_PTR, OMX_BUFFERHEADERTYPE*);
@@ -39,6 +42,7 @@ public:
         clock = NULL;
         videoFile = NULL;
         stream = NULL;
+        packetCounter = 0;
     }
     
     
@@ -206,6 +210,8 @@ public:
             buffer->nFilledLen      = 0;
             buffer->nOffset         = 0;
             buffer->pAppPrivate     = (void*)i;
+            decoderInputBuffers.push_back(buffer);
+            decoderInputBuffersAvailable.push(buffer);
         }
         
         
@@ -268,18 +274,170 @@ public:
         
         clock->start(0.0);
         
+        OMX_CONFIG_DISPLAYREGIONTYPE displayConfig;
+        OMX_INIT_STRUCTURE(displayConfig);
+        displayConfig.nPortIndex = VIDEO_RENDER_INPUT_PORT;
+        displayConfig.set = (OMX_DISPLAYSETTYPE)(OMX_DISPLAY_SET_FULLSCREEN | OMX_DISPLAY_SET_MODE);
+        displayConfig.fullscreen  = OMX_TRUE; 
+        displayConfig.mode  = OMX_DISPLAY_MODE_FILL; 
+        error = OMX_SetConfig(renderer, OMX_IndexConfigDisplayRegion, &displayConfig);
+        OMX_TRACE(error);
+       
+        ofSleepMillis(2000);
+        
         while(videoFile->read())
         {
             counter++;
         }
         
-        for (size_t i=0; i<videoFile->omxPackets.size(); i++) 
+        
+        if(videoFile->getBestVideoStream()->codecExtraSize > 0 && videoFile->getBestVideoStream()->codecExtraData != NULL)
         {
-            //ofLog() << i << endl << videoFile->omxPackets[i]->toString();
-        }
+            int extraSize = videoFile->getBestVideoStream()->codecExtraSize;
+            uint8_t* extraData = (uint8_t *)malloc(extraSize);
+            memcpy(extraData, videoFile->getBestVideoStream()->codecExtraData, extraSize);
+            
+            OMX_BUFFERHEADERTYPE* omxBuffer = NULL;
+            if(!decoderInputBuffersAvailable.empty())
+            {
+                omxBuffer = decoderInputBuffersAvailable.front();
+                decoderInputBuffersAvailable.pop();
+                omxBuffer->nOffset = 0;
+                omxBuffer->nFilledLen = extraSize;
+                memset((unsigned char *)omxBuffer->pBuffer, 0x0, omxBuffer->nAllocLen);
+                memcpy((unsigned char *)omxBuffer->pBuffer, extraData, omxBuffer->nFilledLen);
+                omxBuffer->nFlags = OMX_BUFFERFLAG_CODECCONFIG | OMX_BUFFERFLAG_ENDOFFRAME;
+                error = OMX_EmptyThisBuffer(decoder, omxBuffer);
+                OMX_TRACE(error);
+            }
+            
+        }  
+        
+    }
+    bool doSetStartTime = true;
+    
+    
+    OMX_TICKS ToOMXTime(int64_t pts)
+    {
+        OMX_TICKS ticks;
+        ticks.nLowPart = pts;
+        ticks.nHighPart = pts >> 32;
+        return ticks;
     }
     
+    int64_t FromOMXTime(OMX_TICKS ticks)
+    {
+        int64_t pts = ticks.nLowPart | ((uint64_t)(ticks.nHighPart) << 32);
+        return pts;
+    }
     
+    void decodeNext()
+    {
+        ofLogVerbose() << "decodeNext: " << packetCounter;
+        packetCounter++;
+        decode(videoFile->omxPackets[packetCounter]);
+    }
+    bool decode(OMXPacket* pkt)
+    {
+        
+        if(!pkt)
+        {
+            return false;
+        }
+        double currentPTS=0;
+        bool result = false;
+        double pts = pkt->pts;
+        double dts = pkt->dts;
+        
+        if(pkt->pts == DVD_NOPTS_VALUE)
+        {
+            pts = pkt->dts;
+        }
+        
+        if(pts != DVD_NOPTS_VALUE)
+        {
+            currentPTS = pts;
+        }
+        
+        ofLog(OF_LOG_VERBOSE, "decode dts:%.0f pts:%.0f cur:%.0f, size:%d", pkt->dts, pkt->pts, currentPTS, pkt->size);
+        decode(pkt->data, pkt->size, dts, pts);
+        
+        return result;
+    }
+    bool decode(uint8_t* demuxer_content, int iSize, double dts, double pts)
+    {
+        OMX_ERRORTYPE error;
+        
+        unsigned int demuxer_bytes = (unsigned int)iSize;
+        
+        if (demuxer_content && demuxer_bytes > 0)
+        {
+            while(demuxer_bytes)
+            {
+                
+                OMX_BUFFERHEADERTYPE* omxBuffer = NULL;
+                if(!decoderInputBuffersAvailable.empty())
+                {
+                    omxBuffer = decoderInputBuffersAvailable.front();
+                    decoderInputBuffersAvailable.pop();
+                }
+                ofLogVerbose() << "decoderInputBuffersAvailable: " << decoderInputBuffersAvailable.size();
+                omxBuffer->nFlags = 0;
+                omxBuffer->nOffset = 0;
+                
+                if(doSetStartTime)
+                {
+                    omxBuffer->nFlags |= OMX_BUFFERFLAG_STARTTIME;
+                    ofLog(OF_LOG_VERBOSE, "VideoDecoderDirect::Decode VDec : setStartTime %f\n", (pts == DVD_NOPTS_VALUE ? 0.0 : pts) / DVD_TIME_BASE);
+                    doSetStartTime = false;
+                }
+                if (pts == DVD_NOPTS_VALUE)
+                {
+                    omxBuffer->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
+                }
+                
+                omxBuffer->nTimeStamp = ToOMXTime((uint64_t)(pts == DVD_NOPTS_VALUE) ? 0 : pts);
+                if(demuxer_bytes > omxBuffer->nAllocLen)
+                {
+                    ofLog() << "USING nAllocLen: "<< omxBuffer->nAllocLen;
+                    omxBuffer->nFilledLen = omxBuffer->nAllocLen;
+                }else
+                {
+                    ofLog() << "USING demuxer_bytes: " << demuxer_bytes;
+
+                    omxBuffer->nFilledLen = demuxer_bytes;
+                }
+                ofLog() << "PRE COPY";
+                
+                ofLog() << "demuxer_bytes: " << demuxer_bytes;
+                ofLog() << "demuxer_content: " << demuxer_content;
+                ofLog() << "omxBuffer->nFilledLen: " << omxBuffer->nFilledLen;
+                ofLog() << "omxBuffer->nTimeStamp: " << FromOMXTime(omxBuffer->nTimeStamp);
+
+                memcpy(omxBuffer->pBuffer, demuxer_content, omxBuffer->nFilledLen);
+                ofLog() << "POST COPY";
+
+                demuxer_bytes -= omxBuffer->nFilledLen;
+                demuxer_content += omxBuffer->nFilledLen;
+                
+
+
+                if(demuxer_bytes == 0)
+                {
+                    //ofLogVerbose(__func__) << "OMX_BUFFERFLAG_ENDOFFRAME";
+                    omxBuffer->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
+                }
+                error = OMX_EmptyThisBuffer(decoder, omxBuffer);
+                OMX_TRACE(error);
+                
+            }
+            
+            return true;
+        }
+        
+        return false;
+    }
+
     
     static OMX_ERRORTYPE onRenderFillBufferDone(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
     {	
@@ -404,6 +562,9 @@ public:
     static OMX_ERRORTYPE onDecoderEmptyBufferDone(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
     {	
         ofLogVerbose(__func__) << "";
+        Decoder* myDecoder = (Decoder*)pAppData;
+        myDecoder->decoderInputBuffersAvailable.push(pBuffer);
+        myDecoder->decodeNext();
         return OMX_ErrorNone;
     }
     

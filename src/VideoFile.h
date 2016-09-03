@@ -58,6 +58,7 @@ public:
     bool isValid;
     
     AVCodecID codec;
+    AVMediaType mediaType;
     bool forceSoftwareDecoding;  //force software decoding
     
     // VIDEO
@@ -95,7 +96,7 @@ public:
     bool isAVI;
     bool isMKV;
     bool doFormatting;
-    string codecTypeString;
+    string mediaTypeString;
     Stream()
     {
         avStream = NULL;
@@ -135,7 +136,8 @@ public:
         isAVI = false;
         isMKV = false;
         doFormatting = false;
-        codecTypeString = "";
+        mediaTypeString = "";
+        mediaType = AVMEDIA_TYPE_UNKNOWN;
     }
     
     bool NaluFormatStartCodes(enum AVCodecID codec, unsigned char *in_extradata, int in_extrasize)
@@ -163,56 +165,57 @@ public:
     bool setup(AVStream* avStream_)
     {
         avStream = avStream_;
-        switch (avStream->codec->codec_type)
+        mediaType = avStream->codec->codec_type;
+        switch (mediaType)
         {
             case AVMEDIA_TYPE_AUDIO:
             {
-                codecTypeString = "AVMEDIA_TYPE_AUDIO";
+                mediaTypeString = "AVMEDIA_TYPE_AUDIO";
                 isValid = true;
                 hasAudio = true;
                 break;
             }
             case AVMEDIA_TYPE_VIDEO:
             {
-                codecTypeString = "AVMEDIA_TYPE_VIDEO";
+                mediaTypeString = "AVMEDIA_TYPE_VIDEO";
                 isValid = true;
                 hasVideo = true;                
                 break;
             }
             case AVMEDIA_TYPE_UNKNOWN:
             {
-                codecTypeString = "AVMEDIA_TYPE_UNKNOWN";            
+                mediaTypeString = "AVMEDIA_TYPE_UNKNOWN";            
                 break;
             }    
             case AVMEDIA_TYPE_DATA:
             {
-                codecTypeString = "AVMEDIA_TYPE_DATA";            
+                mediaTypeString = "AVMEDIA_TYPE_DATA";            
                 break;
             } 
             case AVMEDIA_TYPE_SUBTITLE:
             {
-                codecTypeString = "AVMEDIA_TYPE_SUBTITLE";            
+                mediaTypeString = "AVMEDIA_TYPE_SUBTITLE";            
                 break;
             }
             case AVMEDIA_TYPE_ATTACHMENT:
             {
-                codecTypeString = "AVMEDIA_TYPE_ATTACHMENT";            
+                mediaTypeString = "AVMEDIA_TYPE_ATTACHMENT";            
                 break;
             }
             case AVMEDIA_TYPE_NB:
             {
-                codecTypeString = "AVMEDIA_TYPE_NB";            
+                mediaTypeString = "AVMEDIA_TYPE_NB";            
                 break;
             }
             default:
             {
-                codecTypeString = "DEFAULT THROWN";
+                mediaTypeString = "DEFAULT THROWN";
                 break;
             }
         }
         if(isValid)
         {
-            codec               = avStream->codec->codec_id;
+            
             //codecExtraData      = avStream->codec->extradata;
             //codecExtraSize      = avStream->codec->extradata_size;
             audioChannels       = avStream->codec->channels;
@@ -297,27 +300,35 @@ public:
     string toString()
     {
         stringstream info;
-        info << "width: "				<<	width					<< endl;
-        info << "height: "				<<	height					<< endl;
-        info << "profile: "				<<	profile					<< endl;
-        info << "numFrames: "			<<	numFrames				<< endl;
+        info << "mediaTypeString: "     <<	mediaTypeString         << endl;
+        if(hasVideo)
+        {
+            info << "width: "				<<	width					<< endl;
+            info << "height: "				<<	height					<< endl;
+            info << "profile: "				<<	profile					<< endl;
+            info << "numFrames: "			<<	numFrames				<< endl;
+            info << "framesize: "			<<	framesize				<< endl;
+            info << "fpsScale: "			<<	fpsScale				<< endl;
+            info << "fpsRate: "				<<	fpsRate					<< endl;
+            info << "gopSize: "             <<	gopSize                 << endl;
+            info << "fps: "                 <<	fps                     << endl;
+        }
+
         info << "duration: "			<<	duration				<< endl;
-        info << "framesize: "			<<	framesize				<< endl;
-        info << "fpsScale: "			<<	fpsScale				<< endl;
-        info << "fpsRate: "				<<	fpsRate					<< endl;
         info << "aspect: "				<<	aspect					<< endl;
         info << "level: "				<<	level					<< endl;
         info << "isPTSValid: "			<<	isPTSValid				<< endl;
         info << "codecTag: "			<<	codecTag				<< endl;
         info << "codecExtraSize: "		<<	codecExtraSize			<< endl;
-        info << "gopSize: "             <<	gopSize                 << endl;
-        info << "fps: "                 <<	fps                     << endl;
-        info << "audioChannels: "		<<	audioChannels			<< endl;
-        info << "audioSampleRate: "		<<	audioSampleRate			<< endl;
-        info << "audioBlockAlign: "		<<	audioBlockAlign			<< endl;
-        info << "audioBitrate: "		<<	audioBitrate			<< endl;
-        info << "audioBitsPerSample: "	<<	audioBitsPerSample		<< endl;
-        info << "codecTypeString: "     <<	codecTypeString		<< endl;
+
+        if(hasAudio)
+        {
+            info << "audioChannels: "		<<	audioChannels			<< endl;
+            info << "audioSampleRate: "		<<	audioSampleRate			<< endl;
+            info << "audioBlockAlign: "		<<	audioBlockAlign			<< endl;
+            info << "audioBitrate: "		<<	audioBitrate			<< endl;
+            info << "audioBitsPerSample: "	<<	audioBitsPerSample		<< endl;
+        }
         
         return info.str();
     }
@@ -381,12 +392,14 @@ public:
     
     
     
-    void setup(AVPacket* avPacket, AVFormatContext* avFormatContext, Stream* stream_)
+    bool setup(AVPacket* avPacket, AVFormatContext* avFormatContext, Stream* stream_)
     {
         
         if(!avPacket)
         {
+            
             ofLogVerbose() << "PACKET IS NULL";
+            return false;
         }
 
         size = avPacket->size;
@@ -395,6 +408,7 @@ public:
         {
             data = new uint8_t[size + FF_INPUT_BUFFER_PADDING_SIZE];
             memcpy(data, avPacket->data, size);
+            ofLogVerbose() << "DATA COPIED: " << size;
         }else
         {
             data = NULL;
@@ -409,6 +423,7 @@ public:
         {
             ofLogError() << "NO STREAM!";
             STALL;
+            return false;
         }
         AVStream* avStream = stream->avStream;
         
@@ -416,6 +431,7 @@ public:
         {
             ofLogError() << "NO avStream!";
             STALL;
+            return false;
         }
         codec_type = avStream->codec->codec_type;
         
@@ -447,7 +463,7 @@ public:
                 }
             }
         }        
-        
+        return true;
         
     }
     string toString()
@@ -671,9 +687,12 @@ public:
             if(stream)
             {
                 OMXPacket omxPacket;
-                omxPacket.setup(&pkt, avFormatContext, stream);
-                omxPackets.push_back(&omxPacket);
-                ofLogVerbose() << "omxPacket: " << omxPacket.toString();
+                if(omxPacket.setup(&pkt, avFormatContext, stream))
+                {
+                    omxPackets.push_back(&omxPacket);
+                    ofLogVerbose() << "omxPacket: " << omxPacket.toString();
+                }
+                
             }
             
             
