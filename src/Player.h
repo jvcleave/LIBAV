@@ -18,7 +18,7 @@ public:
     void setup(VideoFile* videoFile_)
     {
         videoFile = videoFile_;
-        clock.setup(videoFile->hasAudio());
+        clock.setup(false);
         decoder.setup(&clock, videoFile);
     }
  

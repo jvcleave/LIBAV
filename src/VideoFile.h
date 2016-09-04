@@ -101,6 +101,7 @@ public:
     bool isMKV;
     bool doFormatting;
     string mediaTypeString;
+    AVDiscard discard;
     Stream()
     {
         avStream = NULL;
@@ -144,6 +145,7 @@ public:
         mediaTypeString = "";
         mediaType = AVMEDIA_TYPE_UNKNOWN;
         omxCodingType   = OMX_VIDEO_CodingUnused;
+        discard = AVDISCARD_NONE;
     }
     
     bool NaluFormatStartCodes(unsigned char *in_extradata, int in_extrasize)
@@ -167,7 +169,51 @@ public:
         }
         return false;
     }
-    
+    string getDiscardString()
+    {
+        string result = "NONE";
+        switch (discard) 
+        {
+            case AVDISCARD_NONE:
+            {
+                result = "AVDISCARD_NONE";
+                break;
+            }
+            case AVDISCARD_DEFAULT:
+            {
+                result = "AVDISCARD_DEFAULT";
+                break;
+            }
+            case AVDISCARD_NONREF:
+            {
+                result = "AVDISCARD_NONREF";
+                break;
+            }
+            case AVDISCARD_BIDIR:
+            {
+                result = "AVDISCARD_BIDIR";
+                break;
+            }
+            case AVDISCARD_NONINTRA:
+            {
+                result = "AVDISCARD_NONINTRA";
+                break;
+            }
+            case AVDISCARD_NONKEY:
+            {
+                result = "AVDISCARD_NONKEY";
+                break;
+            }
+            case AVDISCARD_ALL:
+            {
+                result = "AVDISCARD_ALL";
+                break;
+            }
+            default:
+                break;
+        }
+        return result;
+    }
     bool setup(AVStream* avStream_)
     {
         avStream = avStream_;
@@ -231,7 +277,13 @@ public:
             audioBitrate        = avStream->codec->bit_rate;
             audioBitsPerSample  = avStream->codec->bits_per_coded_sample;
             gopSize             = avStream->codec->gop_size;
+            if(avStream->discard != AVDISCARD_ALL)
+            {
+                avStream->discard = AVDISCARD_NONKEY;
+            }
             
+            discard             = avStream->discard;
+            ofLogVerbose() << "getDiscardString: " << getDiscardString();
             if(audioBitsPerSample == 0)
             {
                 audioBitsPerSample = 16;
@@ -410,7 +462,8 @@ public:
         info << "isPTSValid: "			<<	isPTSValid				<< endl;
         info << "codecTag: "			<<	codecTag				<< endl;
         info << "codecExtraSize: "		<<	codecExtraSize			<< endl;
-
+        info << "discard: "             <<	getDiscardString()      << endl;
+        
         if(hasAudio)
         {
             info << "audioChannels: "		<<	audioChannels			<< endl;

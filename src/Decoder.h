@@ -49,6 +49,10 @@ protected:
 };
 //#define STALL(x) ofSleepMillis(x*1000);
 #define STALL(x) 
+
+#define LOGGER ofLogVerbose(__func__)
+
+
 class Decoder
 {
 public:
@@ -60,6 +64,8 @@ public:
     OMX_HANDLETYPE scheduler;
     OMX_HANDLETYPE imageEffects;
     
+    int EOFCounter;
+    
     vector<OMX_BUFFERHEADERTYPE*> decoderInputBuffers;
     queue<OMX_BUFFERHEADERTYPE*> decoderInputBuffersAvailable;
     int packetCounter = 0;
@@ -68,6 +74,7 @@ public:
     pthread_mutex_t   m_omx_input_mutex;
     CriticalSection  m_critSection;
     double currentPTS;
+    bool isDecoderReady;
     /*
     static OMX_ERRORTYPE onDecoderEmptyBufferDone(OMX_HANDLETYPE, OMX_PTR, OMX_BUFFERHEADERTYPE*);
     static OMX_ERRORTYPE onDecoderFillBufferDone(OMX_HANDLETYPE, OMX_PTR, OMX_BUFFERHEADERTYPE*);
@@ -107,19 +114,26 @@ public:
         doSetStartTime = true;
         pthread_mutex_init(&m_omx_input_mutex, NULL);
         pthread_cond_init(&m_input_buffer_cond, NULL);
+        EOFCounter = 0;
+        isDecoderReady = false;
 
     }
     
     OMX_ERRORTYPE createTunnel(OMX_HANDLETYPE source, int sourcePort, 
                                OMX_HANDLETYPE destination, int destinationPort)
     {
-        
         OMX_ERRORTYPE error = OMX_ErrorNone;
-        error = OMX_SendCommand(source, OMX_CommandStateSet, OMX_StateIdle, NULL);
-        if(error != OMX_ErrorNone)
+        OMX_STATETYPE state;
+        OMX_GetState(source, &state);
+        
+        if(state != OMX_StateIdle)
         {
-            ofLogError() << "Could not set source to Idle";
-            return error;
+            error = OMX_SendCommand(source, OMX_CommandStateSet, OMX_StateIdle, NULL);
+            if(error != OMX_ErrorNone)
+            {
+                ofLogError() << "Could not set source to Idle";
+                return error;
+            }
         }
 
 
@@ -130,13 +144,18 @@ public:
             return error;
         }
         
+        OMX_GetState(destination, &state);
         
-        error = OMX_SendCommand(destination, OMX_CommandStateSet, OMX_StateIdle, NULL);
-        if(error != OMX_ErrorNone)
+        if(state != OMX_StateIdle)
         {
-            ofLogError() << "Could not set destination to Idle";
-            return error;
+            error = OMX_SendCommand(destination, OMX_CommandStateSet, OMX_StateIdle, NULL);
+            if(error != OMX_ErrorNone)
+            {
+                ofLogError() << "Could not set destination to Idle";
+                return error;
+            }
         }
+        
         
         
         error = OMX_SendCommand(destination, OMX_CommandPortDisable, destinationPort, NULL);
@@ -187,10 +206,10 @@ public:
         error = OMX_GetHandle(&decoder, OMX_VIDEO_DECODER, this, &decoderCallbacks);
         OMX_TRACE(error);
         
-        ofLogVerbose() << "decoder DISABLE START";
+        //LOGGER << "decoder DISABLE START";
         error = disableAllPortsForComponent(decoder);
         OMX_TRACE(error);
-        ofLogVerbose() << "decoder DISABLE END";
+        //LOGGER << "decoder DISABLE END";
         
         
         OMX_CALLBACKTYPE  rendererCallbacks;
@@ -201,10 +220,10 @@ public:
         error = OMX_GetHandle(&renderer, OMX_VIDEO_RENDER, this, &rendererCallbacks);
         OMX_TRACE(error);
         
-        ofLogVerbose() << "renderer DISABLE START";
+        //LOGGER << "renderer DISABLE START";
         error = disableAllPortsForComponent(renderer);
         OMX_TRACE(error);
-        ofLogVerbose() << "renderer DISABLE END";
+        //LOGGER << "renderer DISABLE END";
         
         
         OMX_CALLBACKTYPE  schedulerCallbacks;
@@ -215,10 +234,10 @@ public:
         error = OMX_GetHandle(&scheduler, OMX_VIDEO_SCHEDULER, this, &schedulerCallbacks);
         OMX_TRACE(error);
         
-        ofLogVerbose() << "scheduler DISABLE START";
+        //LOGGER << "scheduler DISABLE START";
         error = disableAllPortsForComponent(scheduler);
         OMX_TRACE(error);
-        ofLogVerbose() << "scheduler DISABLE END";
+        //LOGGER << "scheduler DISABLE END";
         
         
         //clock->scheduler
@@ -226,7 +245,7 @@ public:
         OMX_TRACE(error);
         if(error == OMX_ErrorNone)
         {
-            ofLogVerbose() << "clock->scheduler SUCCESS";
+            //LOGGER << "clock->scheduler SUCCESS";
         }
         STALL(3);
         
@@ -244,7 +263,7 @@ public:
         {
             formatType.xFramerate = 25 * (1<<16);
         }
-        ofLogVerbose() << "formatType.xFramerate: " << formatType.xFramerate;
+        //LOGGER << "formatType.xFramerate: " << formatType.xFramerate;
         error = OMX_SetParameter(decoder, OMX_IndexParamVideoPortFormat, &formatType);
         OMX_TRACE(error);
         
@@ -271,7 +290,7 @@ public:
         error = OMX_SetParameter(decoder, OMX_IndexParamBrcmVideoDecodeErrorConcealment, &concanParam);
         OMX_TRACE(error);
         
-        ofLogVerbose() << "stream->doFormatting: " << stream->doFormatting;
+        //LOGGER << "stream->doFormatting: " << stream->doFormatting;
         
         //
         if(stream->doFormatting)
@@ -292,27 +311,7 @@ public:
         
         error = OMX_SendCommand(decoder, OMX_CommandStateSet, OMX_StateIdle, NULL);
         OMX_TRACE(error);
-
-        OMX_STATETYPE state;
-        error = OMX_GetState(decoder, &state);
-        OMX_TRACE(error);
-        ofLogVerbose() << "decoder state: " << OMX_Maps::getInstance().omxStateNames[state];
-            
-        int counter = 0;
-        if(state != OMX_StateIdle)
-        {
-            while(state != OMX_StateIdle)
-            {
-                error = OMX_SendCommand(decoder, OMX_CommandStateSet, OMX_StateIdle, NULL);
-                OMX_TRACE(error);
-                counter++;
-                error = OMX_GetState(decoder, &state);
-                //OMX_TRACE(error);
-                ofLogVerbose() << "decoder state: " << OMX_Maps::getInstance().omxStateNames[state] << " : " << counter;
-                
-            }
-            
-        }
+        
         error = OMX_SendCommand(decoder, OMX_CommandPortEnable, VIDEO_DECODER_INPUT_PORT, NULL);
         OMX_TRACE(error);
         
@@ -323,9 +322,9 @@ public:
         error = OMX_GetParameter(decoder, OMX_IndexParamPortDefinition, &portFormat);
         OMX_TRACE(error);
         
-        ofLogVerbose() << "decoder portFormat.bEnabled: " << portFormat.bEnabled;
-        ofLogVerbose() << "decoder portFormat.nBufferCountActual: " << portFormat.nBufferCountActual;
-        ofLogVerbose() << "decoder portFormat.nBufferSize: " << portFormat.nBufferSize;
+        //LOGGER << "decoder portFormat.bEnabled: " << portFormat.bEnabled;
+        //LOGGER << "decoder portFormat.nBufferCountActual: " << portFormat.nBufferCountActual;
+        //LOGGER << "decoder portFormat.nBufferSize: " << portFormat.nBufferSize;
         
         for (size_t i = 0; i < portFormat.nBufferCountActual; i++)
         {
@@ -343,34 +342,44 @@ public:
             decoderInputBuffersAvailable.push(buffer);
         }
         
-        
+        bool useScheduler = true;
 
-        
-        error = createTunnel(decoder, VIDEO_DECODER_OUTPUT_PORT, scheduler, VIDEO_SCHEDULER_INPUT_PORT);
-        OMX_TRACE(error);
-        
-        if(error == OMX_ErrorNone)
+        if(useScheduler)
         {
-            ofLogVerbose() << "decoder->scheduler SUCCESS";
-        }
-        STALL(3);
+            error = createTunnel(decoder, VIDEO_DECODER_OUTPUT_PORT, scheduler, VIDEO_SCHEDULER_INPUT_PORT);
+            OMX_TRACE(error);
             
-        error = createTunnel(scheduler, VIDEO_SCHEDULER_OUTPUT_PORT, renderer, VIDEO_RENDER_INPUT_PORT);
-        OMX_TRACE(error);
-        if(error == OMX_ErrorNone)
+            if(error == OMX_ErrorNone)
+            {
+                //LOGGER << "decoder->scheduler SUCCESS";
+            }
+            STALL(3);
+            
+            error = createTunnel(scheduler, VIDEO_SCHEDULER_OUTPUT_PORT, renderer, VIDEO_RENDER_INPUT_PORT);
+            OMX_TRACE(error);
+            if(error == OMX_ErrorNone)
+            {
+                //LOGGER << "scheduler->renderer SUCCESS";
+            }
+            STALL(3);
+            
+        }else
         {
-            ofLogVerbose() << "scheduler->renderer SUCCESS";
+            error = createTunnel(decoder, VIDEO_DECODER_OUTPUT_PORT, renderer, VIDEO_RENDER_INPUT_PORT);
+            OMX_TRACE(error);
         }
-        STALL(3);
-        
+       
+            
+       
+#if 0   
         //allocate render input buffers (unused with direct)
         portFormat.nPortIndex = VIDEO_RENDER_INPUT_PORT;
         error = OMX_GetParameter(renderer, OMX_IndexParamPortDefinition, &portFormat);
         OMX_TRACE(error);
         
-        ofLogVerbose() << "renderer portFormat.bEnabled: " << portFormat.bEnabled;
-        ofLogVerbose() << "renderer portFormat.nBufferCountActual: " << portFormat.nBufferCountActual;
-        ofLogVerbose() << "renderer portFormat.nBufferSize: " << portFormat.nBufferSize;
+        //LOGGER << "renderer portFormat.bEnabled: " << portFormat.bEnabled;
+        //LOGGER << "renderer portFormat.nBufferCountActual: " << portFormat.nBufferCountActual;
+        //LOGGER << "renderer portFormat.nBufferSize: " << portFormat.nBufferSize;
         for (size_t i = 0; i < portFormat.nBufferCountActual; i++)
         {
             OMX_BUFFERHEADERTYPE *buffer = NULL;
@@ -384,22 +393,26 @@ public:
             buffer->nOffset         = 0;
             buffer->pAppPrivate     = (void*)i;
         }
-        
+#endif       
+        clock->start(0.0);
         
         //start decoder
         error = OMX_SendCommand(decoder, OMX_CommandStateSet, OMX_StateExecuting, 0);
         OMX_TRACE(error);
         
+        if(useScheduler)
+        {
+            //start scheduler
+            error = OMX_SendCommand(scheduler, OMX_CommandStateSet, OMX_StateExecuting, 0);
+            OMX_TRACE(error);
+            STALL(3);
+        }
         
-        //start scheduler
-        error = OMX_SendCommand(scheduler, OMX_CommandStateSet, OMX_StateExecuting, 0);
-        OMX_TRACE(error);
-        STALL(3);
         //start renderer
         error = OMX_SendCommand(renderer, OMX_CommandStateSet, OMX_StateExecuting, 0);
         OMX_TRACE(error);
         
-        clock->start(0.0);
+        
         
         OMX_CONFIG_DISPLAYREGIONTYPE displayConfig;
         OMX_INIT_STRUCTURE(displayConfig);
@@ -498,7 +511,7 @@ public:
             decodeOMXPacket(videoFile->omxPackets[packetCounter]);
         }else
         {
-            ofLogVerbose() << "END OF PACKETS";
+            //LOGGER << "END OF PACKETS";
             STALL(5);
             ofExit();
         }
@@ -536,7 +549,7 @@ public:
         info << "currentPTS: " << currentPTS << endl;
         info << "getMediaTime: " << clock->getMediaTime();
 
-        ofLogVerbose(__func__) << info.str();
+        //LOGGER << info.str();
         
         //ofLog(OF_LOG_VERBOSE, "decode dts:%.0f pts:%.0f cur:%.0f, size:%d", pkt->dts, pkt->pts, currentPTS, pkt->size);
         result = decode(pkt->data, pkt->size, dts, pts);
@@ -563,7 +576,7 @@ public:
                     omxBuffer = decoderInputBuffersAvailable.front();
                     decoderInputBuffersAvailable.pop();
                 }
-                ofLogVerbose() << "decoderInputBuffersAvailable: " << decoderInputBuffersAvailable.size();
+                //LOGGER << "decoderInputBuffersAvailable: " << decoderInputBuffersAvailable.size();
                 omxBuffer->nFlags = 0;
                 omxBuffer->nOffset = 0;
                 
@@ -581,17 +594,17 @@ public:
                 omxBuffer->nTimeStamp = ToOMXTime((uint64_t)(pts == DVD_NOPTS_VALUE) ? 0 : pts);
                 if(demuxer_bytes > omxBuffer->nAllocLen)
                 {
-                    ofLog() << "USING nAllocLen: "<< omxBuffer->nAllocLen;
+                    //LOGGER << "USING nAllocLen: "<< omxBuffer->nAllocLen;
                     omxBuffer->nFilledLen = omxBuffer->nAllocLen;
                 }else
                 {
-                    ofLog() << "USING demuxer_bytes: " << demuxer_bytes;
+                    //LOGGER << "USING demuxer_bytes: " << demuxer_bytes;
 
                     omxBuffer->nFilledLen = demuxer_bytes;
                 }                
-                ofLog() << "demuxer_bytes: " << demuxer_bytes;
-                ofLog() << "omxBuffer->nFilledLen: " << omxBuffer->nFilledLen;
-                ofLog() << "omxBuffer->nTimeStamp: " << FromOMXTime(omxBuffer->nTimeStamp);
+                //LOGGER << "demuxer_bytes: " << demuxer_bytes;
+                //LOGGER << "omxBuffer->nFilledLen: " << omxBuffer->nFilledLen;
+                //LOGGER << "omxBuffer->nTimeStamp: " << FromOMXTime(omxBuffer->nTimeStamp);
 
                 memcpy(omxBuffer->pBuffer, demuxer_content, omxBuffer->nFilledLen);
 
@@ -601,8 +614,10 @@ public:
 
                 if(demuxer_bytes == 0)
                 {
-                    ofLogVerbose(__func__) << "OMX_BUFFERFLAG_ENDOFFRAME";
+                    //LOGGER << "OMX_BUFFERFLAG_ENDOFFRAME";
+                    EOFCounter++;
                     omxBuffer->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
+                    ofLog() <<  "EOFCounter: " << EOFCounter;
                 }
                 error = OMX_EmptyThisBuffer(decoder, omxBuffer);
                 OMX_TRACE(error);
@@ -618,13 +633,13 @@ public:
     
     static OMX_ERRORTYPE onRenderFillBufferDone(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
     {	
-        ofLogVerbose(__func__) << "";
+        //LOGGER << "";
         return OMX_ErrorNone;
     }
     
     static OMX_ERRORTYPE onRenderEmptyBufferDone(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
     {	
-        ofLogVerbose(__func__) << "";
+        //LOGGER << "";
         return OMX_ErrorNone;
     }
     
@@ -638,7 +653,7 @@ public:
               nData1, 
               nData2, 
               pEventData);
-        ofLogVerbose(__func__) << "EVENT TYPE: " << OMX_Maps::getInstance().eventTypes[eEvent];
+        LOGGER << "EVENT TYPE: " << OMX_Maps::getInstance().eventTypes[eEvent];
         
         OMX_ERRORTYPE error = OMX_ErrorNone;
         switch (eEvent) 
@@ -650,7 +665,7 @@ public:
             case OMX_EventParamOrConfigChanged:
             {
                 
-                ofLogVerbose(__func__) << "OMX_EventParamOrConfigChanged";
+                LOGGER << "OMX_EventParamOrConfigChanged";
                 break;
             }	
                 
@@ -672,13 +687,13 @@ public:
     
     static OMX_ERRORTYPE onSchedulerFillBufferDone(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
     {	
-        ofLogVerbose(__func__) << "";
+        //LOGGER << "";
         return OMX_ErrorNone;
     }
     
     static OMX_ERRORTYPE onSchedulerEmptyBufferDone(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
     {	
-        ofLogVerbose(__func__) << "";
+        //LOGGER << "";
         return OMX_ErrorNone;
     }
     
@@ -692,7 +707,7 @@ public:
               nData1, 
               nData2, 
               pEventData);
-        ofLogVerbose(__func__) << "EVENT TYPE: " << OMX_Maps::getInstance().eventTypes[eEvent];
+        LOGGER << "EVENT TYPE: " << OMX_Maps::getInstance().eventTypes[eEvent];
         
         OMX_ERRORTYPE error = OMX_ErrorNone;
         switch (eEvent) 
@@ -707,7 +722,7 @@ public:
             {
                 
                 //return decoder->onCameraEventParamOrConfigChanged();
-                ofLogVerbose(__func__) << "OMX_EventParamOrConfigChanged";
+                LOGGER << "OMX_EventParamOrConfigChanged";
                 break;
             }	
                 
@@ -732,13 +747,13 @@ public:
     
     static OMX_ERRORTYPE onDecoderFillBufferDone(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
     {	
-        ofLogVerbose(__func__) << "";
+        //LOGGER << "";
         return OMX_ErrorNone;
     }
     
     static OMX_ERRORTYPE onDecoderEmptyBufferDone(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
     {	
-        ofLogVerbose(__func__) << "";
+        //LOGGER << "";
         Decoder* myDecoder = (Decoder*)pAppData;
         
         
@@ -771,14 +786,14 @@ public:
               nData1, 
               nData2, 
               pEventData);
-        ofLogVerbose(__func__) << "EVENT TYPE: " << OMX_Maps::getInstance().eventTypes[eEvent];
+        LOGGER << "EVENT TYPE: " << OMX_Maps::getInstance().eventTypes[eEvent];
         
         OMX_ERRORTYPE error = OMX_ErrorNone;
         
         OMX_STATETYPE state;
         error = OMX_GetState(hComponent, &state);
         OMX_TRACE(error);
-        ofLogVerbose(__func__) << "state: " << OMX_Maps::getInstance().omxStateNames[state];
+        //LOGGER << "state: " << OMX_Maps::getInstance().omxStateNames[state];
         
         switch (eEvent) 
         {
@@ -790,7 +805,9 @@ public:
             {
                 
                 //return decoder->onCameraEventParamOrConfigChanged();
-                ofLogVerbose(__func__) << "OMX_EventParamOrConfigChanged";
+                LOGGER << "OMX_EventParamOrConfigChanged";
+                Decoder *decoder = static_cast<Decoder*>(pAppData);
+                decoder->isDecoderReady = true;
                 break;
             }	
                 

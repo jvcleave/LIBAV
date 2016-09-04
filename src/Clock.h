@@ -98,6 +98,16 @@ public:
         
         error = OMX_SetConfig(handle, OMX_IndexConfigTimeActiveRefClock, &refClockConfig);
         OMX_TRACE(error);
+        
+        int speed = 1;
+        
+        OMX_TIME_CONFIG_SCALETYPE scaleType;
+        OMX_INIT_STRUCTURE(scaleType);
+        scaleType.xScale = (speed << 16) / DVD_PLAYSPEED_NORMAL; 
+        
+        error = OMX_SetConfig(handle, OMX_IndexConfigTimeScale, &scaleType);
+        OMX_TRACE(error);
+        
     }
     void start(double pts=0.0)
     {
