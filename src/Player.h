@@ -6,7 +6,6 @@ class Player
 {
 public:
     
-    Clock clock;
     VideoFile* videoFile;
     Decoder decoder;
     
@@ -17,9 +16,10 @@ public:
     
     void setup(VideoFile* videoFile_)
     {
+        OMX_Init();
+
         videoFile = videoFile_;
-        clock.setup(false);
-        decoder.setup(&clock, videoFile);
+        decoder.setup(videoFile);
     }
  
 };

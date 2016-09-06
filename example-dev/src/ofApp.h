@@ -14,6 +14,5 @@ public:
     void keyPressed(int key);
     
     VideoFile videoFile;
-    Clock clock;
     Player player;
 };

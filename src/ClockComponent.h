@@ -1,13 +1,12 @@
 #pragma once
 
-#include "OMX_Maps.h"
+#include "Component.h"
 
 
 
-class Clock
+class ClockComponent: public Component
 {
 public:
-    
     
     
     
@@ -25,58 +24,17 @@ public:
         int64_t pts = ticks.nLowPart | ((uint64_t)(ticks.nHighPart) << 32);
         return pts;
     }
+
     
-    
-    
-    static OMX_ERRORTYPE 
-    onClockEmptyBufferDone(OMX_HANDLETYPE hComponent, 
-                        OMX_PTR pAppData, 
-                        OMX_BUFFERHEADERTYPE* pBuffer)
+   
+    ClockComponent()
     {
-        return OMX_ErrorNone;
-    };
-    
-    static OMX_ERRORTYPE 
-    onClockFillBufferDone(OMX_HANDLETYPE hComponent, 
-                       OMX_PTR pAppData, 
-                       OMX_BUFFERHEADERTYPE* pBuffer)
-    {
-        return OMX_ErrorNone;
-    };
-    
-    static OMX_ERRORTYPE 
-   onClockEvent(OMX_HANDLETYPE hComponent, 
-                             OMX_PTR pAppData, 
-                             OMX_EVENTTYPE eEvent, 
-                             OMX_U32 nData1, 
-                             OMX_U32 nData2, 
-                             OMX_PTR pEventData)
-    {
-        return OMX_ErrorNone;
-    };
-    
-    
-    OMX_HANDLETYPE handle;
-    Clock()
-    {
-        OMX_Init();
-        
-        OMX_CALLBACKTYPE  callbacks;
-        callbacks.EventHandler    = &Clock::onClockEvent;
-        callbacks.EmptyBufferDone = &Clock::onClockEmptyBufferDone;
-        callbacks.FillBufferDone  = &Clock::onClockFillBufferDone;
-        
-        OMX_ERRORTYPE error = OMX_ErrorNone;
-        
-        error = OMX_GetHandle(&handle, OMX_CLOCK, this, &callbacks);
-        OMX_TRACE(error);
-        ofLogVerbose() << "CLOCK DISABLE START";
-        disableAllPortsForComponent(handle);
-        ofLogVerbose() << "CLOCK DISABLE END";
+        name = OMX_CLOCK;
         
     }
+
     
-    void setup(bool useAudioAsReference)
+    void setReference(bool useAudioAsReference)
     {
         OMX_ERRORTYPE error = OMX_ErrorNone;
         

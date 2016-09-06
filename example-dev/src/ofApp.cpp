@@ -13,7 +13,8 @@ void ofApp::setup()
     //string videoPath = ofToDataPath("/home/pi/videos/current/KALI UCHIS - NEVER BE YOURS-e9aqYvzqrnI.mp4", true);
     ofLogVerbose() << "videoPath: " << videoPath;
     videoFile.setup(videoPath);
-    
+    int numPackets = videoFile.omxPackets.size();
+    ofLogVerbose() << "numPackets: " << numPackets;
     player.setup(&videoFile);
     
     
