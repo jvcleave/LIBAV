@@ -349,24 +349,7 @@ public:
         PortSettingsChanged = true;
         ofLog() << "PortSettingsChanged: " << PortSettingsChanged << " isDecoding: " << isDecoding;
         OMX_ERRORTYPE error;
-        
-        /*
-        error = OMX_SendCommand(decoderComponent.handle, OMX_CommandStateSet, OMX_StateIdle, NULL);
-        OMX_TRACE(error);
-        
-        
-        error = decoderComponent.DisablePort(VIDEO_DECODER_OUTPUT_PORT);
-        OMX_TRACE(error);
-        if(error != OMX_ErrorNone)
-        {
-            ofLogError() << "Could not disable port " << VIDEO_DECODER_OUTPUT_PORT;
-            return;
-        }
-        */
-        
-        
-#if 1
-        //decoderMutex.lock();
+
         ofLogVerbose(__func__) << "START";
         
        
@@ -378,7 +361,6 @@ public:
         {
             LOGGER << "clockComponent.schedulerComponent.handle SUCCESS";
         }
-        STALL(3);
         
         
         
@@ -450,8 +432,6 @@ public:
         
         PortSettingsChanged = true;
         decodeNext();
-        //decoderMutex.unlock();
-#endif
 
     }
     
@@ -470,11 +450,6 @@ public:
     }
     
     
-    
-    
-    
-
-    bool doPrint = true;
     void decodeNext()
     {
         if(isDecoding)
@@ -483,7 +458,6 @@ public:
         }
         decoderMutex.lock();
         isDecoding = true;
-        //ofLogError() << "PortSettingsChanged: " << PortSettingsChanged;
         if(!videoFile)
         {
             ofLogError(__func__) << "NO VIDEO FILE";
@@ -492,9 +466,6 @@ public:
         {
             if(packetCounter < videoFile->omxPackets.size())
             {
-                //ofLog() << "packetCounter: " << packetCounter;
-                //ofLog() << "videoFile->omxPackets.size(): " << videoFile->omxPackets.size();
-                
                 if(videoFile->omxPackets[packetCounter])
                 {
                     if(decodeOMXPacket(videoFile->omxPackets[packetCounter]))
@@ -510,9 +481,7 @@ public:
 
     }
     bool decodeOMXPacket(OMXPacket* pkt)
-    {
-        //SingleLock lock (m_critSection);
-        
+    {        
         bool result = false;
         if(!pkt)
         {
@@ -548,7 +517,7 @@ public:
         
         //ofLog(OF_LOG_VERBOSE, "decode dts:%.0f pts:%.0f cur:%.0f, size:%d", pkt->dts, pkt->pts, currentPTS, pkt->size);
         result = decode(pkt->data, pkt->size, dts, pts);
-        ofLogVerbose(__func__) << "result: " << result;
+        //ofLogVerbose(__func__) << "result: " << result;
         return result;
     }
     bool decode(uint8_t* demuxer_content, int iSize, double dts, double pts)
@@ -571,14 +540,12 @@ public:
                     omxBuffer = decoderComponent.inputBuffersAvailable.front();
                     decoderComponent.inputBuffersAvailable.pop();
                 }
-                //LOGGER << "decoderInputBuffersAvailable: " << decoderInputBuffersAvailable.size();
                 omxBuffer->nFlags = 0;
                 omxBuffer->nOffset = 0;
                 
                 if(doSetStartTime)
                 {
                     omxBuffer->nFlags |= OMX_BUFFERFLAG_STARTTIME;
-                    ofLog(OF_LOG_VERBOSE, "VideoDecoderDirect::Decode VDec : setStartTime %f\n", (pts == DVD_NOPTS_VALUE ? 0.0 : pts) / DVD_TIME_BASE);
                     doSetStartTime = false;
                 }
                 if (pts == DVD_NOPTS_VALUE)
@@ -589,17 +556,11 @@ public:
                 omxBuffer->nTimeStamp = ToOMXTime((uint64_t)(pts == DVD_NOPTS_VALUE) ? 0 : pts);
                 if(demuxer_bytes > omxBuffer->nAllocLen)
                 {
-                    //LOGGER << "USING nAllocLen: "<< omxBuffer->nAllocLen;
                     omxBuffer->nFilledLen = omxBuffer->nAllocLen;
                 }else
                 {
-                    //LOGGER << "USING demuxer_bytes: " << demuxer_bytes;
-
-                    omxBuffer->nFilledLen = demuxer_bytes;
+                     omxBuffer->nFilledLen = demuxer_bytes;
                 }                
-                //LOGGER << "demuxer_bytes: " << demuxer_bytes;
-                //LOGGER << "omxBuffer->nFilledLen: " << omxBuffer->nFilledLen;
-                //LOGGER << "omxBuffer->nTimeStamp: " << FromOMXTime(omxBuffer->nTimeStamp);
 
                 memcpy(omxBuffer->pBuffer, demuxer_content, omxBuffer->nFilledLen);
 
@@ -609,10 +570,9 @@ public:
 
                 if(demuxer_bytes == 0)
                 {
-                    //LOGGER << "OMX_BUFFERFLAG_ENDOFFRAME";
                     EOFCounter++;
                     omxBuffer->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
-                    ofLog() <<  "EOFCounter: " << EOFCounter;
+                    ofLog() <<  "EOFCounter: " << EOFCounter << " timeStamp: " << FromOMXTime(omxBuffer->nTimeStamp);
                 }
                 
                 error = OMX_EmptyThisBuffer(decoderComponent.handle, omxBuffer);
@@ -653,71 +613,6 @@ public:
             onPortSettingsChanged();
         }
     }
-    
-#if 0
-    
-    static OMX_ERRORTYPE onEvent(OMX_HANDLETYPE hComponent,
-                                        OMX_PTR pAppData,
-                                        OMX_EVENTTYPE eEvent,
-                                        OMX_U32 nData1,
-                                        OMX_U32 nData2,
-                                        OMX_PTR pEventData)
-    {
-        ofLog(
-              OF_LOG_VERBOSE, 
-              "%s - eEvent(0x%x), nData1(0x%ux), nData2(0x%ux), pEventData(0x%p)\n",
-              __func__, 
-              eEvent, 
-              nData1, 
-              nData2, 
-              pEventData);
-        //LOGGER << "EVENT TYPE: " << OMX_Maps::getInstance().eventTypes[eEvent];
-        
-        OMX_ERRORTYPE error = OMX_ErrorNone;
-        
-        OMX_STATETYPE state;
-        error = OMX_GetState(hComponent, &state);
-        OMX_TRACE(error);
-        //LOGGER << "state: " << OMX_Maps::getInstance().omxStateNames[state];
-        
-        switch (eEvent) 
-        {
-            case OMX_EventCmdComplete:
-            {
-                break;
-            }
-            case OMX_EventPortSettingsChanged:
-            {
-                break;
-            }
-            case OMX_EventParamOrConfigChanged:
-            {
-                
-                //return decoderComponent.handle->onCameraEventParamOrConfigChanged();
-                LOGGER << "OMX_EventParamOrConfigChanged";
-                break;
-            }	
-                
-            case OMX_EventError:
-            {
-                error = (OMX_ERRORTYPE)nData1;
-                break;
-                
-            }
-            default: 
-            {
-                /* ofLog(OF_LOG_VERBOSE, 
-                 "onEncoderEvent::%s - eEvent(0x%x), nData1(0x%ux), nData2(0x%ux), pEventData(0x%p)\n",
-                 __func__, eEvent, nData1, nData2, pEventData);*/
-                
-                break;
-            }
-        }
-        OMX_TRACE(error);
-        return error;
-    }
-#endif   
-
-
+ 
 
 };
