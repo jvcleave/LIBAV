@@ -694,7 +694,7 @@ string omxErrorToString(OMX_ERRORTYPE error)
 #define OMX_LOG_LEVEL_SILENT 9
 
 #ifndef OMX_LOG_LEVEL
-#define OMX_LOG_LEVEL OMX_LOG_LEVEL_VERBOSE
+#define OMX_LOG_LEVEL OMX_LOG_LEVEL_DEV
 #endif
 
 extern inline  
@@ -759,6 +759,9 @@ void logOMXError(OMX_ERRORTYPE error, string comments="", string functionName=""
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #endif
+
+#define START ofLogVerbose(__func__) << "START";
+#define END ofLogVerbose(__func__) << "END";
 
 //if this is crashing it you probably need callbacks set for components
 extern inline

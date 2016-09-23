@@ -55,7 +55,7 @@ protected:
 #define LOGGER ofLogVerbose(__func__)
 
 
-class Decoder: public ComponentListener
+class Decoder: public ComponentListener, public ofThread
 {
 public:
     
@@ -73,13 +73,15 @@ public:
     int packetCounter = 0;
     bool doSetStartTime;
 
-    CriticalSection  m_critSection;
     double currentPTS;
     bool PortSettingsChanged;
     bool useScheduler;
     bool isDecoding;
+    queue<OMXPacket*> cache;
+
+    
+    
    
-    std::mutex decoderMutex;
     Decoder()
     {
         videoFile = NULL;
@@ -304,48 +306,15 @@ public:
         OMX_TRACE(error);
         
         
-        SendDecoderConfig();
-         
+        
+        startThread();
         
     }
     
-    void SendDecoderConfig()
-    {
-       // SingleLock lock (m_critSection);
-        if(stream->codecExtraSize > 0 && stream->codecExtraData != NULL)
-        {
-            int extraSize = stream->codecExtraSize;
-            uint8_t* extraData = (uint8_t *)malloc(extraSize);
-            memcpy(extraData, stream->codecExtraData, extraSize);
-            
-            OMX_BUFFERHEADERTYPE* omxBuffer = decoderComponent.getInputBuffer(500);
-            if(omxBuffer)
-            {
-                omxBuffer->nOffset = 0;
-                omxBuffer->nFilledLen = extraSize;
-                memset((unsigned char *)omxBuffer->pBuffer, 0x0, omxBuffer->nAllocLen);
-                memcpy((unsigned char *)omxBuffer->pBuffer, extraData, omxBuffer->nFilledLen);
-                omxBuffer->nFlags = OMX_BUFFERFLAG_CODECCONFIG | OMX_BUFFERFLAG_ENDOFFRAME;
-               
-                OMX_ERRORTYPE error = OMX_EmptyThisBuffer(decoderComponent.handle, omxBuffer); 
-                OMX_TRACE(error);
-                
-                while(!PortSettingsChanged)
-                {
-                    decodeNext();    
-                }
-                
-            }else
-            {
-                ofLogError() << "NO INPUT BUFFER";
-                STALL(2);
-                
-            }
-            
-        } 
-    }
     void onPortSettingsChanged()
     {
+        START;
+        //lock();
         PortSettingsChanged = true;
         ofLog() << "PortSettingsChanged: " << PortSettingsChanged << " isDecoding: " << isDecoding;
         OMX_ERRORTYPE error;
@@ -432,7 +401,8 @@ public:
         
         PortSettingsChanged = true;
         decodeNext();
-
+        //unlock();
+        END;
     }
     
     OMX_TICKS ToOMXTime(int64_t pts)
@@ -449,35 +419,25 @@ public:
         return pts;
     }
     
-    
     void decodeNext()
     {
-        if(isDecoding)
+        
+        
+        START;
+        
+        if(packetCounter < videoFile->omxPackets.size())
         {
-            return;
-        }
-        decoderMutex.lock();
-        isDecoding = true;
-        if(!videoFile)
-        {
-            ofLogError(__func__) << "NO VIDEO FILE";
-            
-        }else
-        {
-            if(packetCounter < videoFile->omxPackets.size())
+            if(videoFile->omxPackets[packetCounter])
             {
-                if(videoFile->omxPackets[packetCounter])
-                {
-                    if(decodeOMXPacket(videoFile->omxPackets[packetCounter]))
-                    {
-                        packetCounter++;
-                    }
-                }
                 
+                cache.push(videoFile->omxPackets[packetCounter]);
+                packetCounter++;
             }
+            
         }
-        isDecoding = false;
-        decoderMutex.unlock();
+                        
+
+        END;
 
     }
     bool decodeOMXPacket(OMXPacket* pkt)
@@ -523,8 +483,7 @@ public:
     bool decode(uint8_t* demuxer_content, int iSize, double dts, double pts)
     {
         
-        
-        
+        bool result = false;
         OMX_ERRORTYPE error;
         
         unsigned int demuxer_bytes = (unsigned int)iSize;
@@ -540,51 +499,121 @@ public:
                     omxBuffer = decoderComponent.inputBuffersAvailable.front();
                     decoderComponent.inputBuffersAvailable.pop();
                 }
-                omxBuffer->nFlags = 0;
-                omxBuffer->nOffset = 0;
-                
-                if(doSetStartTime)
+                if(omxBuffer)
                 {
-                    omxBuffer->nFlags |= OMX_BUFFERFLAG_STARTTIME;
-                    doSetStartTime = false;
-                }
-                if (pts == DVD_NOPTS_VALUE)
-                {
-                    omxBuffer->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
-                }
-                
-                omxBuffer->nTimeStamp = ToOMXTime((uint64_t)(pts == DVD_NOPTS_VALUE) ? 0 : pts);
-                if(demuxer_bytes > omxBuffer->nAllocLen)
-                {
-                    omxBuffer->nFilledLen = omxBuffer->nAllocLen;
+                    omxBuffer->nFlags = 0;
+                    omxBuffer->nOffset = 0;
+                    
+                    if(doSetStartTime)
+                    {
+                        omxBuffer->nFlags |= OMX_BUFFERFLAG_STARTTIME;
+                        doSetStartTime = false;
+                    }
+                    if (pts == DVD_NOPTS_VALUE)
+                    {
+                        omxBuffer->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
+                    }
+                    
+                    omxBuffer->nTimeStamp = ToOMXTime((uint64_t)(pts == DVD_NOPTS_VALUE) ? 0 : pts);
+                    if(demuxer_bytes > omxBuffer->nAllocLen)
+                    {
+                        omxBuffer->nFilledLen = omxBuffer->nAllocLen;
+                    }else
+                    {
+                        omxBuffer->nFilledLen = demuxer_bytes;
+                    }                
+                    
+                    memcpy(omxBuffer->pBuffer, demuxer_content, omxBuffer->nFilledLen);
+                    
+                    demuxer_bytes -= omxBuffer->nFilledLen;
+                    demuxer_content += omxBuffer->nFilledLen;
+                    
+                    
+                    if(demuxer_bytes == 0)
+                    {
+                        EOFCounter++;
+                        omxBuffer->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
+                        ofLog() <<  "EOFCounter: " << EOFCounter << " timeStamp: " << FromOMXTime(omxBuffer->nTimeStamp);
+                    }
+                    
+                    error = OMX_EmptyThisBuffer(decoderComponent.handle, omxBuffer);
+                    OMX_TRACE(error);
+                    result = true;
                 }else
                 {
-                     omxBuffer->nFilledLen = demuxer_bytes;
-                }                
-
-                memcpy(omxBuffer->pBuffer, demuxer_content, omxBuffer->nFilledLen);
-
-                demuxer_bytes -= omxBuffer->nFilledLen;
-                demuxer_content += omxBuffer->nFilledLen;
-
-
-                if(demuxer_bytes == 0)
-                {
-                    EOFCounter++;
-                    omxBuffer->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
-                    ofLog() <<  "EOFCounter: " << EOFCounter << " timeStamp: " << FromOMXTime(omxBuffer->nTimeStamp);
+                    ofLogError(__func__) << "NO BUFFER AVAILABLE";
                 }
-                
-                error = OMX_EmptyThisBuffer(decoderComponent.handle, omxBuffer);
-                OMX_TRACE(error);
             }
             
-            return true;
+            
         }
-        
-        return false;
+        return result;
     }
+    void threadedFunction()
+    {
+        while (isThreadRunning())
+        {
+            if(!PortSettingsChanged)
+            {
+                
+                if(stream->codecExtraSize > 0 && stream->codecExtraData != NULL)
+                {
+                    int extraSize = stream->codecExtraSize;
+                    uint8_t* extraData = (uint8_t *)malloc(extraSize);
+                    memcpy(extraData, stream->codecExtraData, extraSize);
+                    
+                    OMX_BUFFERHEADERTYPE* omxBuffer = decoderComponent.getInputBuffer();
+                    if(omxBuffer)
+                    {
+                        omxBuffer->nOffset = 0;
+                        omxBuffer->nFilledLen = extraSize;
+                        memset((unsigned char *)omxBuffer->pBuffer, 0x0, omxBuffer->nAllocLen);
+                        memcpy((unsigned char *)omxBuffer->pBuffer, extraData, omxBuffer->nFilledLen);
+                        omxBuffer->nFlags = OMX_BUFFERFLAG_CODECCONFIG | OMX_BUFFERFLAG_ENDOFFRAME;
+                        
+                        OMX_ERRORTYPE error = OMX_EmptyThisBuffer(decoderComponent.handle, omxBuffer); 
+                        OMX_TRACE(error);
+                    }
+                    while(!PortSettingsChanged)
+                    {
+                        decodeNext();
+                        ofLogVerbose() << "!cache.size: " << cache.size() << " PortSettingsChanged: " << PortSettingsChanged;
+                        ofLogVerbose() << "packetCounter: " << packetCounter;
 
+                        while(!cache.empty())
+                        {
+                            decodeOMXPacket(cache.front());
+                            cache.pop();
+                            sleep(20);
+                        }
+                        
+                    }
+                    
+                } 
+            }else
+            {
+                if(!cache.empty())
+                {
+                    ofLogVerbose() << "cache.size: " << cache.size()<< " PortSettingsChanged: " << PortSettingsChanged;
+                    while(!cache.empty())
+                    {
+                        
+                        ofLogVerbose() << "packetCounter: " << packetCounter;
+                        
+                        decodeOMXPacket(cache.front());
+                        cache.pop();
+                    }
+                }else
+                {
+                    sleep(20);
+                }
+
+                
+            }
+           
+                
+        }
+    }
     void onFillBuffer()
     {
     
@@ -592,11 +621,15 @@ public:
     
     void onEmptyBuffer()
     {
+        START;
         if(PortSettingsChanged)
         {
-            decodeNext();
+            lock();
+                decodeNext();
+            unlock();
         }
-        
+        END;
+
     }
     
     void onEvent(OMX_EVENTTYPE eEvent)

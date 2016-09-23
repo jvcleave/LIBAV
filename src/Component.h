@@ -11,13 +11,6 @@ public:
     virtual void onEvent(OMX_EVENTTYPE eEvent)=0;
 };
 
-struct omx_event 
-{
-    OMX_EVENTTYPE eEvent;
-    OMX_U32 nData1;
-    OMX_U32 nData2;
-};
-
 
 
 class Component
@@ -27,28 +20,11 @@ public:
     OMX_HANDLETYPE handle;
     OMX_CALLBACKTYPE  callbacks;
     string name;
-    std::vector<omx_event> m_omx_events;
-    
-    
-    //OMX_ERRORTYPE (*FillBufferDoneHandler)(OMX_HANDLETYPE, OMX_PTR, OMX_BUFFERHEADERTYPE*);
-    //OMX_ERRORTYPE (*EmptyBufferDoneHandler)();
-   // OMX_ERRORTYPE (*EventHandler)(OMX_HANDLETYPE, OMX_PTR, OMX_EVENTTYPE, OMX_U32, OMX_U32, OMX_PTR);
-    
     vector<OMX_BUFFERHEADERTYPE*>   inputBuffers;
     queue<OMX_BUFFERHEADERTYPE*>    inputBuffersAvailable;
     condition_variable      m_input_buffer_cond;
     std::mutex          m_omx_input_mutex;
-    std::mutex          m_omx_event_mutex;
-    static void add_timespecs(struct timespec& time, long millisecs)
-    {
-        time.tv_sec  += millisecs / 1000;
-        time.tv_nsec += (millisecs % 1000) * 1000000;
-        if (time.tv_nsec > 1000000000)
-        {
-            time.tv_sec  += 1;
-            time.tv_nsec -= 1000000000;
-        }
-    }
+
     ComponentListener* listener;
     
     static 
@@ -58,21 +34,27 @@ public:
     {
         
         
-        
-       Component *component = (Component*)pAppData;
-        
-        component->m_omx_input_mutex.lock();
-
-        component->inputBuffersAvailable.push(pBuffer);
-        
-        component->m_omx_input_mutex.unlock();
-        
-        
-        
-        if(component->listener)
+        START;
+        Component *component = (Component*)pAppData;
+        if(component->m_omx_input_mutex.try_lock())
         {
-            component->listener->onEmptyBuffer();
+            ofLogVerbose(__func__) << "lock";
+            component->inputBuffersAvailable.push(pBuffer);
+            ofLogVerbose() << "component->inputBuffersAvailable: " << component->inputBuffersAvailable.size();
+            component->m_omx_input_mutex.unlock();
+            ofLogVerbose(__func__) << "unlock";
+            
+            if(component->listener)
+            {
+                component->listener->onEmptyBuffer();
+            }
+        }else
+        {
+            ofLogError(__func__) << "ALREADY LOCKED";
         }
+        
+        END; 
+        
         return OMX_ErrorNone;
     }
     
@@ -204,7 +186,8 @@ public:
         return handle;
     }
     
-    OMX_BUFFERHEADERTYPE* getInputBuffer(long timeout)
+
+    OMX_BUFFERHEADERTYPE* getInputBuffer()
     {
         if(!handle) 
         {
@@ -213,173 +196,16 @@ public:
         
         OMX_BUFFERHEADERTYPE* inputBuffer = NULL;
         
-        
-        m_omx_input_mutex.lock();
-        struct timespec endtime;
-        clock_gettime(CLOCK_REALTIME, &endtime);
-        add_timespecs(endtime, timeout);
-        while (1)
+        std::unique_lock<mutex> lock(m_omx_input_mutex);
+        if(!inputBuffersAvailable.empty())
         {
-            if(!inputBuffersAvailable.empty())
-            {
-                inputBuffer = inputBuffersAvailable.front();
-                inputBuffersAvailable.pop();
-                break;
-            }
-            /*
-            int retcode = pthread_cond_timedwait(&m_input_buffer_cond, &m_omx_input_mutex, &endtime);
-            if (retcode != 0)
-            {
-                ofLogError(__func__) << "DECODER TIMEOUT AT: " << timeout;
-                break;
-            }*/
+            inputBuffer = inputBuffersAvailable.front();
+            inputBuffersAvailable.pop();
         }
-        m_omx_input_mutex.unlock();
+        lock.unlock();
         return inputBuffer;
     }
     
-    OMX_ERRORTYPE 
-    DisablePort(unsigned int port, bool wait=true)
-    {
-
-        
-        OMX_ERRORTYPE error = OMX_ErrorNone;
-        
-        OMX_PARAM_PORTDEFINITIONTYPE portFormat;
-        OMX_INIT_STRUCTURE(portFormat);
-        portFormat.nPortIndex = port;
-        
-        error = OMX_GetParameter(handle, OMX_IndexParamPortDefinition, &portFormat);
-        OMX_TRACE(error);
-        
-        if(portFormat.bEnabled == OMX_TRUE)
-        {
-            error = OMX_SendCommand(handle, OMX_CommandPortDisable, port, NULL);
-            OMX_TRACE(error);
-            if(error == OMX_ErrorNone)
-            {
-                if(wait)
-                {
-                    error = WaitForCommand(OMX_CommandPortDisable, port);
-                }
-            }
-            else
-            {
-                
-            }
-        }
-        return error;
-    }
-    
-#define OMX_DEBUG_EVENTS 1
-    
-    // timeout in milliseconds
-    OMX_ERRORTYPE WaitForCommand(OMX_U32 command, OMX_U32 nData2, long timeout=2000)
-    {
-#ifdef OMX_DEBUG_EVENTS
-        ofLog(OF_LOG_VERBOSE, "COMXCoreComponent::WaitForCommand %s wait event.eEvent 0x%08x event.command 0x%08x event.nData2 %d\n", 
-                  name.c_str(), (int)OMX_EventCmdComplete, (int)command, (int)nData2);
-#endif
-        
-        m_omx_event_mutex.lock();
-        struct timespec endtime;
-        clock_gettime(CLOCK_REALTIME, &endtime);
-        add_timespecs(endtime, timeout);
-        while(true) 
-        {
-            for (std::vector<omx_event>::iterator it = m_omx_events.begin(); it != m_omx_events.end(); it++) 
-            {
-                omx_event event = *it;
-                
-#ifdef OMX_DEBUG_EVENTS
-                ofLog(OF_LOG_VERBOSE, "COMXCoreComponent::WaitForCommand %s inlist event event.eEvent 0x%08x event.nData1 0x%08x event.nData2 %d\n",
-                          name.c_str(), (int)event.eEvent, (int)event.nData1, (int)event.nData2);
-#endif
-                if(event.eEvent == OMX_EventError && event.nData1 == (OMX_U32)OMX_ErrorSameState && event.nData2 == 1)
-                {
-#ifdef OMX_DEBUG_EVENTS
-                    ofLog(OF_LOG_VERBOSE, "COMXCoreComponent::WaitForCommand %s remove event event.eEvent 0x%08x event.nData1 0x%08x event.nData2 %d\n",
-                              name.c_str(), (int)event.eEvent, (int)event.nData1, (int)event.nData2);
-#endif
-                    
-                    m_omx_events.erase(it);
-                    m_omx_event_mutex.unlock();
-                    return OMX_ErrorNone;
-                } 
-                else if(event.eEvent == OMX_EventError) 
-                {
-                    m_omx_events.erase(it);
-                    m_omx_event_mutex.unlock();
-                    return (OMX_ERRORTYPE)event.nData1;
-                } 
-                else if(event.eEvent == OMX_EventCmdComplete && event.nData1 == command && event.nData2 == nData2) 
-                {
-                    
-#ifdef OMX_DEBUG_EVENTS
-                    ofLog(OF_LOG_VERBOSE, "COMXCoreComponent::WaitForCommand %s remove event event.eEvent 0x%08x event.nData1 0x%08x event.nData2 %d\n",
-                              name.c_str(), (int)event.eEvent, (int)event.nData1, (int)event.nData2);
-#endif
-                    
-                    m_omx_events.erase(it);
-                    m_omx_event_mutex.unlock();
-                    return OMX_ErrorNone;
-                }
-            }
-            /*
-            if (m_resource_error)
-            {
-                 break;
-            }
-            int retcode = pthread_cond_timedwait(&m_omx_event_cond, &m_omx_event_mutex, &endtime);
-            if (retcode != 0) {
-                ofLog(OF_LOG_ERROR, "COMXCoreComponent::WaitForCommand %s wait timeout event.eEvent 0x%08x event.command 0x%08x event.nData2 %d\n", 
-                          name.c_str(), (int)OMX_EventCmdComplete, (int)command, (int)nData2);
-                
-                m_omx_event_mutex.unlock();
-                return OMX_ErrorTimeout;
-            }*/
-        }
-        m_omx_event_mutex.unlock();
-        return OMX_ErrorNone;
-    }
-    
-    
-    
-
-    
-    
-    OMX_ERRORTYPE AddEvent(OMX_EVENTTYPE eEvent, OMX_U32 nData1, OMX_U32 nData2)
-    {
-        omx_event event;
-        
-        event.eEvent      = eEvent;
-        event.nData1      = nData1;
-        event.nData2      = nData2;
-        
-        m_omx_event_mutex.lock();
-        for (std::vector<omx_event>::iterator it = m_omx_events.begin(); it != m_omx_events.end(); ) 
-        {
-            omx_event event = *it;
-            
-            if(event.eEvent == eEvent && event.nData1 == nData1 && event.nData2 == nData2) 
-            {
-                it = m_omx_events.erase(it);
-                continue;
-            }
-            ++it;
-        }
-        m_omx_events.push_back(event);
-        // this allows (all) blocked tasks to be awoken
-        //pthread_cond_broadcast(&m_omx_event_cond);
-        m_omx_event_mutex.lock();
-        
-#ifdef OMX_DEBUG_EVENTS
-        ofLog(OF_LOG_VERBOSE, "COMXCoreComponent::AddEvent %s add event event.eEvent 0x%08x event.nData1 0x%08x event.nData2 %d\n",
-                  name.c_str(), (int)event.eEvent, (int)event.nData1, (int)event.nData2);
-#endif
-        
-        return OMX_ErrorNone;
-    }
 
     
     

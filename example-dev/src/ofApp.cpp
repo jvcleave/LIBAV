@@ -7,7 +7,11 @@ void ofApp::setup()
     av_register_all();
     avformat_network_init();
     
-    string videoPath = ofToDataPath("Timecoded_Big_bunny_1.mov", true);
+    
+    ofDirectory videos(ofToDataPath("/home/pi/videos/current", true));
+    videos.sort();
+    
+    string videoPath = videos.getFiles()[0].path();
     //string videoPath = ofToDataPath("test.h264", true);
 
     //string videoPath = ofToDataPath("/home/pi/videos/current/KALI UCHIS - NEVER BE YOURS-e9aqYvzqrnI.mp4", true);
